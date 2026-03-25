@@ -267,23 +267,104 @@ export default function CookieDashboard() {
     setProducts(products.filter(p => p.id !== id));
   };
 
-  const handleSyncSheet = () => {
+  // ==========================================
+  // LÓGICA DE SINCRONIZAÇÃO COM A PLANILHA REAL
+  // ==========================================
+  const handleSyncSheet = async () => {
+    if (!sheetUrl) {
+      alert("Por favor, cole o link da sua planilha.");
+      return;
+    }
     setIsSyncing(true);
-    setTimeout(() => {
+
+    try {
+      let fetchUrl = sheetUrl;
+      if (fetchUrl.includes('pubhtml')) {
+        fetchUrl = fetchUrl.replace('pubhtml', 'pub') + (fetchUrl.includes('?') ? '&output=csv' : '?output=csv');
+      } else if (!fetchUrl.includes('output=csv')) {
+        fetchUrl += (fetchUrl.includes('?') ? '&output=csv' : '?output=csv');
+      }
+
+      const response = await fetch(fetchUrl);
+      if (!response.ok) throw new Error("Não foi possível acessar a planilha. Verifique o link.");
+      
+      const csvText = await response.text();
+      const lines = csvText.split('\n').filter(line => line.trim() !== '');
+      
+      // Leitura inteligente do Cabeçalho (identifica a ordem das colunas automaticamente)
+      const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.toLowerCase().trim());
+      
+      let nameIdx = 0, bulkQtyIdx = 1, unitIdx = 2, bulkPriceIdx = 3, recipeQtyIdx = 4;
+      
+      headers.forEach((h, idx) => {
+        if (h.includes('nome') || h.includes('ingrediente') || h.includes('matéria')) nameIdx = idx;
+        else if (h.includes('uso') || h.includes('receita') || h.includes('usada')) recipeQtyIdx = idx;
+        else if (h.includes('preço') || h.includes('valor') || h.includes('custo') || h.includes('pacote')) bulkPriceIdx = idx;
+        else if (h.includes('unidade') || h.includes('medida') || h === 'un' || h === 'g' || h === 'ml') unitIdx = idx;
+        else if (h.includes('qtd') || h.includes('quant') || h.includes('peso')) bulkQtyIdx = idx;
+      });
+
+      const parsedIngredients = [];
+      
+      for (let i = 1; i < lines.length; i++) {
+        const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+        
+        if (row.length > Math.max(nameIdx, bulkPriceIdx)) {
+          const clean = (str) => str ? str.replace(/(^"|"$)/g, '').trim() : '';
+          const parseNumber = (str) => {
+            let cleaned = clean(str).replace(/[R$\s]/g, '');
+            if (cleaned.includes(',') && cleaned.includes('.')) {
+               cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+            } else if (cleaned.includes(',')) {
+               cleaned = cleaned.replace(',', '.');
+            }
+            const num = parseFloat(cleaned);
+            return isNaN(num) ? 0 : num;
+          };
+
+          const name = clean(row[nameIdx]);
+          if (!name) continue;
+
+          let rQty = parseNumber(row[recipeQtyIdx]);
+          
+          // Fallback: se a coluna "Uso na Receita" estiver vazia, ele vasculha o resto da linha procurando o número
+          if (rQty === 0) {
+            for (let j = 3; j < row.length; j++) {
+              if (j !== bulkPriceIdx && j !== bulkQtyIdx) {
+                let val = parseNumber(row[j]);
+                if (val > 0) {
+                  rQty = val;
+                  break;
+                }
+              }
+            }
+          }
+
+          parsedIngredients.push({
+            id: i.toString(),
+            name: name,
+            bulkQty: parseNumber(row[bulkQtyIdx]),
+            unit: clean(row[unitIdx]) || 'un',
+            bulkPrice: parseNumber(row[bulkPriceIdx]),
+            recipeQty: rQty
+          });
+        }
+      }
+
+      if (parsedIngredients.length > 0) {
+         ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
+         parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
+         const syncTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+         saveConfig({ lastSync: syncTime });
+      } else {
+         alert("A planilha foi lida, mas nenhum ingrediente foi encontrado. Tem certeza que copiou a aba certa e tem cabeçalho?");
+      }
+    } catch (error) {
+      console.error("Erro na leitura da planilha:", error);
+      alert("Erro ao ler planilha. Garanta que ela foi publicada na web corretamente.");
+    } finally {
       setIsSyncing(false);
-      setLastSync(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-      setIngredients([
-        { id: '1', name: 'Manteiga', bulkQty: 200, unit: 'g', bulkPrice: 12.50, recipeQty: 200 },
-        { id: '2', name: 'Açúcar mascavo', bulkQty: 1000, unit: 'g', bulkPrice: 18.10, recipeQty: 195 },
-        { id: '3', name: 'Açúcar', bulkQty: 1000, unit: 'g', bulkPrice: 3.90, recipeQty: 90 },
-        { id: '4', name: 'Chocolate', bulkQty: 160, unit: 'g', bulkPrice: 7.50, recipeQty: 160 },
-        { id: '5', name: 'Farinha', bulkQty: 1000, unit: 'g', bulkPrice: 4.30, recipeQty: 285 },
-        { id: '6', name: 'Ovos', bulkQty: 20, unit: 'u', bulkPrice: 14.90, recipeQty: 2 },
-        { id: '7', name: 'Baunilha', bulkQty: 30, unit: 'ml', bulkPrice: 3.00, recipeQty: 5 },
-        { id: '8', name: 'Bicarbonato', bulkQty: 100, unit: 'g', bulkPrice: 2.00, recipeQty: 4 },
-        { id: '9', name: 'Sal', bulkQty: 1000, unit: 'g', bulkPrice: 3.00, recipeQty: 5 },
-      ]);
-    }, 2000);
+    }
   };
 
   const handleDeleteCustomer = (id) => {
