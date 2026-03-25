@@ -363,13 +363,24 @@ export default function CookieDashboard() {
       }
 
       if (parsedIngredients.length > 0) {
-         ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
-         parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
+         // 1. Atualiza a tela imediatamente (garante que funciona mesmo sem banco de dados)
+         setIngredients(parsedIngredients);
          const syncTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-         saveConfig({ lastSync: syncTime });
+         setLastSync(syncTime);
+
+         // 2. Tenta salvar no banco de dados apenas se as funções existirem
+         try {
+           if (typeof saveToDb === 'function') {
+               ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
+               parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
+               saveConfig({ lastSync: syncTime });
+           }
+         } catch(e) { console.log("Aviso: Dados atualizados apenas na tela, banco de dados não configurado.", e); }
+         
       } else {
          alert("A planilha foi lida, mas nenhum ingrediente foi encontrado. Tem certeza que copiou a aba certa e tem cabeçalho?");
       }
+        
     } catch (error) {
       console.error("Erro na leitura da planilha:", error);
       alert("Erro ao ler planilha. Garanta que ela foi publicada na web corretamente.");
