@@ -1,46 +1,21 @@
 import React, { useState, useMemo, useEffect } from 'react';
+// IMPORTAÇÕES DO FIREBASE (Faltava isso!)
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+
+// IMPORTAÇÕES DOS ÍCONES
 import { 
-  Cookie, 
-  Users, 
-  Network, 
-  Lightbulb, 
-  FileSpreadsheet, 
-  Plus, 
-  RefreshCw,
-  Link as LinkIcon,
-  Trash2,
-  Star,
-  ThumbsUp,
-  ArrowUpDown,
-  CalendarCheck,
-  CheckCircle,
-  Clock,
-  XCircle,
-  Calculator,
-  DollarSign,
-  TrendingUp,
-  Package,
-  BarChart3,
-  Activity,
-  PieChart,
-  ShoppingCart,
-  Award,
-  History,
-  X,
-  ChevronDown,
-  ChevronRight,
-  ShoppingBag,
-  Tag,
-  Layers,
-  Calendar,
-  AlertCircle,
-  Moon,
-  Sun
+  Cookie, Users, Network, Lightbulb, FileSpreadsheet, Plus, RefreshCw,
+  Link as LinkIcon, Trash2, Star, ThumbsUp, ArrowUpDown, CalendarCheck,
+  CheckCircle, Clock, XCircle, Calculator, DollarSign, TrendingUp,
+  Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
+  X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
+  AlertCircle, Moon, Sun
 } from 'lucide-react';
 
-
 // --- CONFIGURAÇÃO DO FIREBASE ---
-let firebaseConfig = {
+const firebaseConfig = {
   apiKey: "AIzaSyBSih7dkMmGmYg2NUcM7a_ki-PQtKJ2504",
   authDomain: "cookiedash.firebaseapp.com",
   projectId: "cookiedash",
@@ -49,15 +24,16 @@ let firebaseConfig = {
   appId: "1:165689377990:web:266b6edaed2a8aee48c3c7",
   measurementId: "G-PFR7GKRLZ2"
 };
-// O sistema inicia em branco
-const INITIAL_CUSTOMERS = [];
-const INITIAL_SUGGESTIONS = [];
-const INITIAL_RESERVATIONS = [
-  { id: '1', name: 'João Mendes', productId: 'prod-1', productName: 'Cookie Tradicional', quantity: 2, cookieUnits: 2, expectedRevenue: 20.00, status: 'pending', date: '2026-03-28' },
-  { id: '2', name: 'Carla Dias', productId: 'prod-1', productName: 'Cookie Tradicional', quantity: 5, cookieUnits: 5, expectedRevenue: 50.00, status: 'completed', date: '2026-03-22' }
-];
-const INITIAL_INGREDIENTS = [];
-const INITIAL_SALES = [];
+
+// --- LIGANDO O MOTOR DO FIREBASE ---
+let app, auth, db;
+const appId = 'cookie-dash-app';
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (e) { console.error("Erro ao iniciar Firebase:", e); }
+
 const INITIAL_PRODUCTS = [
   { id: 'prod-1', name: 'Cookie Tradicional', price: 10.00, type: 'single', units: 1 }
 ];
@@ -66,34 +42,81 @@ export default function CookieDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
   
-  // Estados Principais
-  const [customers, setCustomers] = useState(INITIAL_CUSTOMERS);
-  const [suggestions, setSuggestions] = useState(INITIAL_SUGGESTIONS);
-  const [reservations, setReservations] = useState(INITIAL_RESERVATIONS);
-  const [ingredients, setIngredients] = useState(INITIAL_INGREDIENTS);
-  const [sales, setSales] = useState(INITIAL_SALES);
+  // ==========================================
+  // ESTADOS COM FIREBASE (BANCO DE DADOS REAL)
+  // ==========================================
+  const [user, setUser] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [ingredients, setIngredients] = useState([]);
+  const [sales, setSales] = useState([]);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
   
-  // Configurações de Preço e Planejamento
   const [recipeConfig, setRecipeConfig] = useState({ yield: 12, salePrice: 10.00 });
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [lastSync, setLastSync] = useState(null);
+
+  // Estados de interface (Formulários)
   const [batchDate, setBatchDate] = useState('');
-  
-  // Estados de formulários
   const [newCustomer, setNewCustomer] = useState({ name: '', referredBy: '', purchases: 1 });
   const [newSuggestion, setNewSuggestion] = useState({ type: 'flavor', text: '' });
   const [newReservation, setNewReservation] = useState({ name: '', productId: '', quantity: 1, date: '' });
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
-  
-  // Formulário Rápido de Vendas
   const [quickSale, setQuickSale] = useState({ customerName: '', referredBy: '', productId: INITIAL_PRODUCTS[0]?.id || '', quantity: 1, revenue: 10.00 });
   
-  // Outros estados
   const [customerSortBy, setCustomerSortBy] = useState('name-asc');
   const [suggestionMatchContext, setSuggestionMatchContext] = useState(null);
-  const [sheetUrl, setSheetUrl] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState(null);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
+
+  // --- 1. AUTENTICAÇÃO ANÔNIMA PARA O FIREBASE ---
+  useEffect(() => {
+    if (!auth) return;
+    const initAuth = async () => {
+      try { await signInAnonymously(auth); } catch(e) { console.error("Erro no Auth:", e); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // --- 2. LER DADOS EM TEMPO REAL ---
+  useEffect(() => {
+    if (!db || !user) return;
+    const uid = user.uid;
+    const baseArgs = ['artifacts', appId, 'users', uid];
+
+    const unsubs = [
+      onSnapshot(collection(db, ...baseArgs, 'customers'), snap => setCustomers(snap.docs.map(d => d.data())), console.error),
+      onSnapshot(collection(db, ...baseArgs, 'sales'), snap => setSales(snap.docs.map(d => d.data())), console.error),
+      onSnapshot(collection(db, ...baseArgs, 'products'), snap => {
+        if(snap.empty) setProducts(INITIAL_PRODUCTS);
+        else setProducts(snap.docs.map(d => d.data()));
+      }, console.error),
+      onSnapshot(collection(db, ...baseArgs, 'reservations'), snap => setReservations(snap.docs.map(d => d.data())), console.error),
+      onSnapshot(collection(db, ...baseArgs, 'ingredients'), snap => setIngredients(snap.docs.map(d => d.data())), console.error),
+      onSnapshot(collection(db, ...baseArgs, 'suggestions'), snap => setSuggestions(snap.docs.map(d => d.data())), console.error),
+      onSnapshot(doc(db, ...baseArgs, 'settings', 'config'), snap => {
+         if (snap.exists()) {
+             const data = snap.data();
+             if(data.recipeConfig) setRecipeConfig(data.recipeConfig);
+             if(data.lastSync) setLastSync(data.lastSync);
+             if(data.sheetUrl) setSheetUrl(data.sheetUrl);
+         }
+      }, console.error)
+    ];
+    return () => unsubs.forEach(fn => fn());
+  }, [user]);
+
+  // --- 3. FUNÇÕES PARA SALVAR NO BANCO ---
+  const saveToDb = async (col, id, data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id), data); };
+  const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
+  const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
+
+  // Salvando configurações simples ao alterar
+  useEffect(() => { if (db && user) saveConfig({ recipeConfig }); }, [recipeConfig]);
+  useEffect(() => { if (db && user) saveConfig({ sheetUrl }); }, [sheetUrl]);
 
   // Efeito para auto-calcular o valor da venda rápida baseado no preço atual
   useEffect(() => {
