@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-// IMPORTAÇÕES DO FIREBASE (Faltava isso!)
+// IMPORTAÇÕES DO FIREBASE
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
@@ -70,7 +70,7 @@ export default function CookieDashboard() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
 
-  // --- 1. AUTENTICAÇÃO ANÔNIMA PARA O FIREBASE ---
+  // --- 1. AUTENTICAÇÃO ANÓNIMA PARA O FIREBASE ---
   useEffect(() => {
     if (!auth) return;
     const initAuth = async () => {
@@ -109,14 +109,14 @@ export default function CookieDashboard() {
     return () => unsubs.forEach(fn => fn());
   }, [user]);
 
-  // --- 3. FUNÇÕES PARA SALVAR NO BANCO ---
+  // --- 3. FUNÇÕES PARA GUARDAR NO BANCO ---
   const saveToDb = async (col, id, data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id), data); };
   const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
-  // Salvando configurações simples ao alterar
-  useEffect(() => { if (db && user) saveConfig({ recipeConfig }); }, [recipeConfig]);
-  useEffect(() => { if (db && user) saveConfig({ sheetUrl }); }, [sheetUrl]);
+  // Guardando configurações simples ao alterar
+  useEffect(() => { if (db && user) saveConfig({ recipeConfig }); }, [recipeConfig, user]);
+  useEffect(() => { if (db && user) saveConfig({ sheetUrl }); }, [sheetUrl, user]);
 
   // Efeito para auto-calcular o valor da venda rápida baseado no preço atual
   useEffect(() => {
@@ -237,18 +237,22 @@ export default function CookieDashboard() {
   }, [customersWithStats]);
 
 
-  // --- HANDLERS ---
+  // ==========================================
+  // HANDLERS (AÇÕES) 100% LIGADOS AO FIREBASE
+  // ==========================================
+  
   const handleQuickSale = (e) => {
     e.preventDefault();
-    if (!quickSale.customerName) return;
+    if (!quickSale.customerName || !user) return;
 
     const selectedProduct = products.find(p => p.id === quickSale.productId);
     const productName = selectedProduct ? selectedProduct.name : 'Avulso';
     const cookieUnits = selectedProduct ? (selectedProduct.units || 1) * Number(quickSale.quantity) : Number(quickSale.quantity);
 
-    // 1. Registra a Venda
+    // 1. Regista a Venda no Banco
+    const newSaleId = Math.random().toString(36).substr(2, 9);
     const newSaleObj = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: newSaleId,
       date: new Date().toISOString(),
       quantity: Number(quickSale.quantity), 
       cookieUnits: cookieUnits, 
@@ -256,23 +260,20 @@ export default function CookieDashboard() {
       customerName: quickSale.customerName.trim(),
       productName: productName
     };
-    setSales([...sales, newSaleObj]);
+    saveToDb('sales', newSaleId, newSaleObj);
 
-    // 2. Atualiza ou Cria o Cliente
+    // 2. Atualiza ou Cria o Cliente no Banco
     const existingCustomer = customers.find(c => c.name.toLowerCase() === quickSale.customerName.toLowerCase().trim());
-    
     if (existingCustomer) {
-      setCustomers(customers.map(c => 
-        c.id === existingCustomer.id ? { ...c, purchases: c.purchases + 1 } : c
-      ));
+      saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
     } else {
-      const newId = Math.random().toString(36).substr(2, 9);
-      setCustomers([...customers, { 
-        id: newId, 
+      const newCustId = Math.random().toString(36).substr(2, 9);
+      saveToDb('customers', newCustId, { 
+        id: newCustId, 
         name: quickSale.customerName.trim(), 
         referredBy: quickSale.referredBy || null, 
         purchases: 1 
-      }]);
+      });
     }
 
     // Limpa formulário
@@ -281,55 +282,40 @@ export default function CookieDashboard() {
 
   const handleAddProduct = (e) => {
     e.preventDefault();
-    if (!newProduct.name || !newProduct.price) return;
+    if (!newProduct.name || !newProduct.price || !user) return;
     const newId = Math.random().toString(36).substr(2, 9);
-    setProducts([...products, { 
+    saveToDb('products', newId, { 
       id: newId, 
       name: newProduct.name, 
       price: Number(newProduct.price),
       type: newProduct.type,
       units: newProduct.type === 'combo' ? Number(newProduct.units) : 1
-    }]);
+    });
     setNewProduct({ name: '', price: '', type: 'single', units: 2 });
-    
-    if (products.length === 0) {
-      setQuickSale(prev => ({ ...prev, productId: newId }));
-    }
   };
 
   const handleDeleteProduct = (id) => {
-    setProducts(products.filter(p => p.id !== id));
+    if(user) deleteFromDb('products', id);
   };
 
-  // ==========================================
-  // LÓGICA DE SINCRONIZAÇÃO COM A PLANILHA REAL
-  // ==========================================
+  // Lógica da Planilha com Salvamento na Nuvem
   const handleSyncSheet = async () => {
-    if (!sheetUrl) {
-      alert("Por favor, cole o link da sua planilha.");
-      return;
-    }
+    if (!sheetUrl) { alert("Por favor, cole o link da sua planilha."); return; }
     setIsSyncing(true);
 
     try {
       let fetchUrl = sheetUrl;
-      if (fetchUrl.includes('pubhtml')) {
-        fetchUrl = fetchUrl.replace('pubhtml', 'pub') + (fetchUrl.includes('?') ? '&output=csv' : '?output=csv');
-      } else if (!fetchUrl.includes('output=csv')) {
-        fetchUrl += (fetchUrl.includes('?') ? '&output=csv' : '?output=csv');
-      }
+      if (fetchUrl.includes('pubhtml')) { fetchUrl = fetchUrl.replace('pubhtml', 'pub') + (fetchUrl.includes('?') ? '&output=csv' : '?output=csv'); } 
+      else if (!fetchUrl.includes('output=csv')) { fetchUrl += (fetchUrl.includes('?') ? '&output=csv' : '?output=csv'); }
 
       const response = await fetch(fetchUrl);
-      if (!response.ok) throw new Error("Não foi possível acessar a planilha. Verifique o link.");
+      if (!response.ok) throw new Error("Não foi possível aceder à planilha. Verifique o link.");
       
       const csvText = await response.text();
       const lines = csvText.split('\n').filter(line => line.trim() !== '');
-      
-      // Leitura inteligente do Cabeçalho (identifica a ordem das colunas automaticamente)
       const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.toLowerCase().trim());
       
       let nameIdx = 0, bulkQtyIdx = 1, unitIdx = 2, bulkPriceIdx = 3, recipeQtyIdx = 4;
-      
       headers.forEach((h, idx) => {
         if (h.includes('nome') || h.includes('ingrediente') || h.includes('matéria')) nameIdx = idx;
         else if (h.includes('uso') || h.includes('receita') || h.includes('usada')) recipeQtyIdx = idx;
@@ -339,87 +325,71 @@ export default function CookieDashboard() {
       });
 
       const parsedIngredients = [];
-      
       for (let i = 1; i < lines.length; i++) {
         const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-        
         if (row.length > Math.max(nameIdx, bulkPriceIdx)) {
           const clean = (str) => str ? str.replace(/(^"|"$)/g, '').trim() : '';
           const parseNumber = (str) => {
             let cleaned = clean(str).replace(/[R$\s]/g, '');
-            if (cleaned.includes(',') && cleaned.includes('.')) {
-               cleaned = cleaned.replace(/\./g, '').replace(',', '.');
-            } else if (cleaned.includes(',')) {
-               cleaned = cleaned.replace(',', '.');
-            }
+            if (cleaned.includes(',') && cleaned.includes('.')) { cleaned = cleaned.replace(/\./g, '').replace(',', '.'); } 
+            else if (cleaned.includes(',')) { cleaned = cleaned.replace(',', '.'); }
             const num = parseFloat(cleaned);
             return isNaN(num) ? 0 : num;
           };
 
           const name = clean(row[nameIdx]);
           if (!name) continue;
-
           let rQty = parseNumber(row[recipeQtyIdx]);
           
-          // Fallback: se a coluna "Uso na Receita" estiver vazia, ele vasculha o resto da linha procurando o número
           if (rQty === 0) {
             for (let j = 3; j < row.length; j++) {
               if (j !== bulkPriceIdx && j !== bulkQtyIdx) {
                 let val = parseNumber(row[j]);
-                if (val > 0) {
-                  rQty = val;
-                  break;
-                }
+                if (val > 0) { rQty = val; break; }
               }
             }
           }
 
           parsedIngredients.push({
-            id: i.toString(),
-            name: name,
-            bulkQty: parseNumber(row[bulkQtyIdx]),
-            unit: clean(row[unitIdx]) || 'un',
-            bulkPrice: parseNumber(row[bulkPriceIdx]),
-            recipeQty: rQty
+            id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]),
+            unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty
           });
         }
       }
 
       if (parsedIngredients.length > 0) {
-         // 1. Atualiza a tela imediatamente (garante que funciona mesmo sem banco de dados)
-         setIngredients(parsedIngredients);
+         setIngredients(parsedIngredients); // Salva local provisoriamente
          const syncTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
          setLastSync(syncTime);
 
-         // 2. Tenta salvar no banco de dados apenas se as funções existirem
-         try {
-           if (typeof saveToDb === 'function') {
-               ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
-               parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
-               saveConfig({ lastSync: syncTime });
-           }
-         } catch(e) { console.log("Aviso: Dados atualizados apenas na tela, banco de dados não configurado.", e); }
-         
-      } else {
-         alert("A planilha foi lida, mas nenhum ingrediente foi encontrado. Tem certeza que copiou a aba certa e tem cabeçalho?");
-      }
+         // Tenta Guardar no Banco
+         if (user) {
+             ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
+             parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
+             saveConfig({ lastSync: syncTime });
+         }
+      } else { alert("Nenhum ingrediente encontrado. Verifique a planilha."); }
         
     } catch (error) {
       console.error("Erro na leitura da planilha:", error);
-      alert("Erro ao ler planilha. Garanta que ela foi publicada na web corretamente.");
+      alert("Erro ao ler planilha. Garanta que ela foi publicada na web em formato CSV.");
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleDeleteCustomer = (id) => {
-    setCustomers(prev => prev.filter(c => c.id !== id).map(c => c.referredBy === id ? { ...c, referredBy: null } : c));
+    if (!user) return;
+    deleteFromDb('customers', id);
+    customers.forEach(c => {
+      if (c.referredBy === id) saveToDb('customers', c.id, { ...c, referredBy: null });
+    });
   };
 
   // Sugestões
   const handleAddSuggestion = (e) => {
     e.preventDefault();
-    if (!newSuggestion.text) return;
+    if (!newSuggestion.text || !user) return;
     const normalizedInput = newSuggestion.text.toLowerCase().trim();
     const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text.toLowerCase().includes(normalizedInput) || normalizedInput.includes(s.text.toLowerCase())));
 
@@ -433,7 +403,7 @@ export default function CookieDashboard() {
   const proceedAddSuggestion = () => {
     const newId = Math.random().toString(36).substr(2, 9);
     const idea = suggestionMatchContext ? suggestionMatchContext.pendingSuggestion : newSuggestion;
-    setSuggestions([...suggestions, { id: newId, ...idea, votes: 1, isFavorite: false }]);
+    saveToDb('suggestions', newId, { id: newId, ...idea, votes: 1, isFavorite: false });
     setNewSuggestion({ type: 'flavor', text: '' });
     setSuggestionMatchContext(null);
   };
@@ -444,14 +414,20 @@ export default function CookieDashboard() {
     setSuggestionMatchContext(null);
   };
 
-  const handleDeleteSuggestion = (id) => setSuggestions(suggestions.filter(s => s.id !== id));
-  const handleToggleFavorite = (id) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, isFavorite: !s.isFavorite } : s));
-  const handleUpvoteSuggestion = (id) => setSuggestions(suggestions.map(s => s.id === id ? { ...s, votes: (s.votes || 0) + 1 } : s));
+  const handleDeleteSuggestion = (id) => user && deleteFromDb('suggestions', id);
+  const handleToggleFavorite = (id) => {
+    const s = suggestions.find(x => x.id === id);
+    if(s && user) saveToDb('suggestions', id, { ...s, isFavorite: !s.isFavorite });
+  };
+  const handleUpvoteSuggestion = (id) => {
+    const s = suggestions.find(x => x.id === id);
+    if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 });
+  };
 
   // Reservas
   const handleAddReservation = (e) => {
     e.preventDefault();
-    if (!newReservation.name || !newReservation.productId) return;
+    if (!newReservation.name || !newReservation.productId || !user) return;
     
     const selectedProduct = products.find(p => p.id === newReservation.productId);
     if (!selectedProduct) return;
@@ -460,7 +436,7 @@ export default function CookieDashboard() {
     const cookieUnits = (selectedProduct.units || 1) * Number(newReservation.quantity);
     const expectedRevenue = selectedProduct.price * Number(newReservation.quantity);
 
-    setReservations([...reservations, { 
+    saveToDb('reservations', newId, { 
       id: newId, 
       name: newReservation.name,
       productId: selectedProduct.id,
@@ -470,11 +446,15 @@ export default function CookieDashboard() {
       expectedRevenue: expectedRevenue,
       date: newReservation.date, 
       status: 'pending' 
-    }]);
+    });
     setNewReservation({ name: '', productId: '', quantity: 1, date: '' });
   };
-  const handleUpdateReservationStatus = (id, status) => setReservations(reservations.map(r => r.id === id ? { ...r, status } : r));
-  const handleDeleteReservation = (id) => setReservations(reservations.filter(r => r.id !== id));
+  
+  const handleUpdateReservationStatus = (id, status) => {
+    const r = reservations.find(x => x.id === id);
+    if (r && user) saveToDb('reservations', id, { ...r, status });
+  };
+  const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
 
   // --- COMPONENTES AUXILIARES ---
   const NetworkNode = ({ customer, isRoot = false }) => {
@@ -628,7 +608,7 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
-              {/* SEÇÃO DE PREVISÕES E AGENDA (REFEITA PARA O NOVO DESIGN) */}
+              {/* SEÇÃO DE PREVISÕES E AGENDA */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                 <div className="lg:col-span-2 bg-amber-50 dark:bg-gray-800/80 rounded-3xl shadow-sm border-2 border-amber-300 dark:border-amber-700/50 p-6 flex flex-col justify-between relative overflow-hidden transition-colors">
                   <div>
@@ -740,7 +720,7 @@ export default function CookieDashboard() {
                     </div>
 
                     <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3 rounded-xl font-bold mt-auto transition shadow-sm">
-                      Registrar Venda
+                      Registar Venda
                     </button>
                   </form>
                 </div>
@@ -828,7 +808,7 @@ export default function CookieDashboard() {
                      ))}
                    </div>
                  ) : (
-                   <p className="text-sm text-gray-500 dark:text-gray-400">Nenhum cliente indicou amigos ainda. Registre indicações nas Novas Vendas!</p>
+                   <p className="text-sm text-gray-500 dark:text-gray-400">Nenhum cliente indicou amigos ainda. Registe indicações nas Novas Vendas!</p>
                  )}
               </div>
             </div>
@@ -1100,8 +1080,8 @@ export default function CookieDashboard() {
             <div className="max-w-6xl mx-auto">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
                 <div>
-                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Gerenciar Clientes</h2>
-                  <p className="text-gray-600 dark:text-gray-400 mt-1">Sua base é alimentada pelas "Novas Vendas" na Visão Geral.</p>
+                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Gerir Clientes</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">A sua base é alimentada pelas "Novas Vendas" na Visão Geral.</p>
                 </div>
                 <div className="flex items-center gap-2 bg-white dark:bg-gray-800 px-4 py-2 rounded-xl border border-amber-200 dark:border-gray-700 shadow-sm w-full sm:w-auto transition-colors">
                   <ArrowUpDown size={18} className="text-amber-600 dark:text-amber-500" />
@@ -1128,7 +1108,7 @@ export default function CookieDashboard() {
                     </thead>
                     <tbody>
                       {sortedCustomersWithStats.length === 0 ? (
-                        <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhum cliente na base. Registre vendas na aba Visão Geral!</td></tr>
+                        <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhum cliente na base. Registe vendas na aba Visão Geral!</td></tr>
                       ) : sortedCustomersWithStats.map((customer) => (
                         <tr key={customer.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
                           <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{customer.name}</td>
@@ -1330,7 +1310,7 @@ export default function CookieDashboard() {
                     <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                       <History className="text-amber-600 dark:text-amber-500" /> Histórico Detalhado
                     </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registro completo de todas as vendas efetuadas.</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registo completo de todas as vendas efetuadas.</p>
                   </div>
                   <button 
                     onClick={() => setShowSalesHistory(false)} 
@@ -1354,7 +1334,7 @@ export default function CookieDashboard() {
                       </thead>
                       <tbody>
                         {sales.length === 0 ? (
-                          <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhuma venda registrada ainda.</td></tr>
+                          <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhuma venda registada ainda.</td></tr>
                         ) : [...sales].sort((a,b) => new Date(b.date) - new Date(a.date)).map(sale => {
                           const estProfit = sale.revenue - ((sale.cookieUnits || sale.quantity) * costMetrics.costPerCookie);
                           return (
