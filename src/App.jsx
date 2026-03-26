@@ -281,14 +281,40 @@ export default function CookieDashboard() {
       const wasteFactor = isPowder ? 1.02 : 1; 
       const totalNeeded = (ing.recipeQty * wasteFactor) * productionBatches;
       const currentStock = parseFloat(ing.currentStock) || 0;
-      const missing = Math.max(0, totalNeeded - currentStock);
-      const costToBuy = missing > 0 ? (missing / ing.bulkQty) * ing.bulkPrice : 0;
-      return { ...ing, totalNeeded, missing, costToBuy, isPowder, wasteFactor };
+      const missingAmount = Math.max(0, totalNeeded - currentStock);
+      
+      let packagesToBuy = 0;
+      let costToBuy = 0;
+      let exactMissingToBuy = 0;
+
+      if (missingAmount > 0 && ing.bulkQty > 0) {
+          packagesToBuy = Math.ceil(missingAmount / ing.bulkQty);
+          costToBuy = packagesToBuy * ing.bulkPrice;
+          exactMissingToBuy = packagesToBuy * ing.bulkQty;
+      }
+
+      return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, isPowder, wasteFactor };
     });
     const totalMissingCost = list.reduce((sum, item) => sum + item.costToBuy, 0);
-    const canProduce = list.every(item => item.missing === 0);
+    const canProduce = list.every(item => item.missingAmount === 0);
     return { list, totalMissingCost, canProduce };
   }, [ingredients, productionBatches]);
+
+  // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje
+  const missingCostForOneBatch = useMemo(() => {
+    return ingredients.reduce((sum, ing) => {
+      const isPowder = ing.unit.toLowerCase() === 'g' || ing.unit.toLowerCase() === 'kg' || ing.unit.toLowerCase() === 'ml' || ing.unit.toLowerCase() === 'l';
+      const wasteFactor = isPowder ? 1.02 : 1; 
+      const totalNeeded = (ing.recipeQty * wasteFactor) * 1; 
+      const currentStock = parseFloat(ing.currentStock) || 0;
+      const missingAmount = Math.max(0, totalNeeded - currentStock);
+      let costToBuy = 0;
+      if (missingAmount > 0 && ing.bulkQty > 0) {
+          costToBuy = Math.ceil(missingAmount / ing.bulkQty) * ing.bulkPrice;
+      }
+      return sum + costToBuy;
+    }, 0);
+  }, [ingredients]);
 
   const handleUpdateStock = (id, val) => {
     const newStock = parseFloat(val) || 0;
@@ -300,7 +326,9 @@ export default function CookieDashboard() {
     ingredients.forEach(ing => {
       const itemCheck = inventoryCheck.list.find(i => i.id === ing.id);
       if(itemCheck) {
-        const newStock = Math.max(0, (ing.currentStock || 0) - itemCheck.totalNeeded);
+        let current = parseFloat(ing.currentStock) || 0;
+        if (itemCheck.packagesToBuy > 0) current += itemCheck.exactMissingToBuy;
+        const newStock = Math.max(0, current - itemCheck.totalNeeded);
         if(user) saveToDb('ingredients', ing.id, { ...ing, currentStock: newStock });
       }
     });
@@ -678,7 +706,7 @@ export default function CookieDashboard() {
         <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
           <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
-            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral (BI)</button>
+            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral</button>
             <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo</button>
             <button onClick={() => setActiveTab('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'inventory' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ClipboardList size={20} /> Estoque & Produção</button>
             <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
@@ -888,7 +916,13 @@ export default function CookieDashboard() {
                       <div className="flex gap-3">
                         <div className="w-1/2">
                           <label className="block text-xs font-medium text-amber-100 mb-1">Data da Venda</label>
-                          <input type="date" required className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition [&::-webkit-calendar-picker-indicator]:invert" value={quickSale.date} onChange={e => setQuickSale({...quickSale, date: e.target.value})} />
+                          <input 
+                            type="date" 
+                            required 
+                            className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition [&::-webkit-calendar-picker-indicator]:invert" 
+                            value={quickSale.date} 
+                            onChange={e => setQuickSale({...quickSale, date: e.target.value})} 
+                          />
                         </div>
                         <div className="w-1/2">
                           <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
@@ -919,7 +953,9 @@ export default function CookieDashboard() {
                             <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
                           </div>
                         </div>
-                        <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">+ Adicionar ao Pedido</button>
+                        <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
+                          + Adicionar ao Pedido
+                        </button>
                       </div>
 
                       {quickSaleCart.length > 0 && (
@@ -941,7 +977,9 @@ export default function CookieDashboard() {
                         </div>
                       )}
 
-                      <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">Registrar Venda</button>
+                      <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">
+                        Registrar Venda
+                      </button>
                     </form>
                   </div>
 
@@ -1000,8 +1038,8 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
-                  <div className="flex-1 flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-2 relative min-h-[200px]">
-                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10">
+                  <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
+                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1085,20 +1123,20 @@ export default function CookieDashboard() {
                       <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
                         <ShoppingCart className="text-red-500" size={20}/> Lista de Compras
                       </h3>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Itens em falta para produzir {productionBatches} receita(s).</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Pacotes que precisa comprar para produzir {productionBatches} receita(s).</p>
                       <div className="space-y-3 mb-4 max-h-[300px] overflow-y-auto pr-2">
-                        {inventoryCheck.list.filter(i => i.missing > 0).map(ing => (
+                        {inventoryCheck.list.filter(i => i.missingAmount > 0).map(ing => (
                           <div key={ing.id} className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0 last:pb-0">
                              <div>
                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{ing.name}</p>
-                               <p className="text-[10px] text-red-500 font-medium">Faltam: {ing.missing.toFixed(1)} {ing.unit}</p>
+                               <p className="text-[10px] text-red-500 font-medium">Comprar: {ing.packagesToBuy} pct(s) ({ing.exactMissingToBuy}{ing.unit})</p>
                              </div>
                              <p className="text-sm font-bold text-gray-700 dark:text-gray-300">R$ {ing.costToBuy.toFixed(2)}</p>
                           </div>
                         ))}
                       </div>
                       <div className="pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                        <span className="font-bold text-gray-600 dark:text-gray-400 text-sm">Custo Estimado:</span>
+                        <span className="font-bold text-gray-600 dark:text-gray-400 text-sm">Custo de Ida ao Mercado:</span>
                         <span className="font-black text-red-600 dark:text-red-400 text-lg">R$ {inventoryCheck.totalMissingCost.toFixed(2)}</span>
                       </div>
                     </div>
@@ -1125,7 +1163,7 @@ export default function CookieDashboard() {
                       </thead>
                       <tbody>
                         {inventoryCheck.list.map(ing => {
-                          const isOk = ing.missing === 0;
+                          const isOk = ing.missingAmount === 0;
                           return (
                             <tr key={ing.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
                               <td className="p-4">
@@ -1151,7 +1189,10 @@ export default function CookieDashboard() {
                                 {isOk ? (
                                   <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"><CheckCircle size={12}/> Suficiente</span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Faltam {ing.missing.toFixed(1)}{ing.unit}</span>
+                                  <div className="flex flex-col items-center gap-1">
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Faltam {ing.packagesToBuy} pct ({ing.exactMissingToBuy}{ing.unit})</span>
+                                    <span className="text-xs font-bold text-red-600 dark:text-red-400">R$ {ing.costToBuy.toFixed(2)}</span>
+                                  </div>
                                 )}
                               </td>
                             </tr>
@@ -1653,9 +1694,13 @@ export default function CookieDashboard() {
                     <span className="text-gray-400">Custo Matéria Prima <span className="text-[10px] block">{globalMetrics.totalCookiesSold} un. x R$ {costMetrics.costPerCookie.toFixed(2)}</span></span>
                     <span className="text-red-400 font-bold">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
                  </div>
-                 <div className="flex justify-between mt-3 pt-3 border-t border-gray-700">
+                 <div className="flex justify-between mt-2 pt-2 border-t border-gray-700 mb-3">
                     <span className="font-bold text-white">Lucro Real Final</span>
                     <span className="text-amber-400 font-black text-lg">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</span>
+                 </div>
+                 <div className="bg-gray-900 rounded-xl p-3 border border-gray-700">
+                    <span className="text-gray-400 text-xs block mb-1">Custo para bater +1 receita hoje:</span>
+                    <span className="text-red-400 font-bold block text-right">R$ {missingCostForOneBatch.toFixed(2)}</span>
                  </div>
                </div>
              )}
@@ -1672,8 +1717,8 @@ export default function CookieDashboard() {
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
-                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Prod.</span>
-                 <span className="font-black text-red-400">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lista Compras (+1)</span>
+                 <span className="font-black text-red-400">-R$ {missingCostForOneBatch.toFixed(2)}</span>
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
