@@ -12,7 +12,7 @@ import {
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
   AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
-  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -48,6 +48,7 @@ const getTodayYMD = () => {
 export default function CookieDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
+  const [showFooterDetails, setShowFooterDetails] = useState(false);
   
   // ==========================================
   // ESTADOS DE AUTENTICAÇÃO E LOGIN
@@ -315,7 +316,7 @@ export default function CookieDashboard() {
     });
   }, [customers]);
 
-  // SISTEMA DE RECOMPENSAS: Alerta quando chega a 2 indicações ou múltiplos de 5
+  // SISTEMA DE RECOMPENSAS
   const pendingRewards = useMemo(() => {
     return customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0));
   }, [customersWithStats]);
@@ -368,7 +369,6 @@ export default function CookieDashboard() {
 
   const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10);
   const rootCustomers = customers.filter(c => !c.referredBy);
-
 
   // ==========================================
   // HANDLERS (AÇÕES)
@@ -609,6 +609,10 @@ export default function CookieDashboard() {
     );
   };
 
+  // ==========================================
+  // RENDERIZAÇÕES PRINCIPAIS (TELA DE LOGIN E DASHBOARD)
+  // ==========================================
+
   if (loadingAuth) {
     return (
       <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex flex-col items-center justify-center p-4">
@@ -665,7 +669,7 @@ export default function CookieDashboard() {
       </div>
     );
   }
-  
+
   return (
     <div className={`${darkMode ? 'dark' : ''} h-full relative`}>
       <div className="flex h-[100dvh] bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300 overflow-hidden">
@@ -706,7 +710,7 @@ export default function CookieDashboard() {
           
           {/* TAB: DASHBOARD PRO */}
           {activeTab === 'dashboard' && (
-            <div className="space-y-8 max-w-7xl mx-auto">
+            <div className="space-y-8 max-w-7xl mx-auto animate-in fade-in duration-300">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-2 gap-4">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Visão Geral <span className="text-amber-600 dark:text-amber-500 font-black">PRO</span></h2>
@@ -884,13 +888,7 @@ export default function CookieDashboard() {
                       <div className="flex gap-3">
                         <div className="w-1/2">
                           <label className="block text-xs font-medium text-amber-100 mb-1">Data da Venda</label>
-                          <input 
-                            type="date" 
-                            required 
-                            className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition [&::-webkit-calendar-picker-indicator]:invert" 
-                            value={quickSale.date} 
-                            onChange={e => setQuickSale({...quickSale, date: e.target.value})} 
-                          />
+                          <input type="date" required className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition [&::-webkit-calendar-picker-indicator]:invert" value={quickSale.date} onChange={e => setQuickSale({...quickSale, date: e.target.value})} />
                         </div>
                         <div className="w-1/2">
                           <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
@@ -921,9 +919,7 @@ export default function CookieDashboard() {
                             <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
                           </div>
                         </div>
-                        <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
-                          + Adicionar ao Pedido
-                        </button>
+                        <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">+ Adicionar ao Pedido</button>
                       </div>
 
                       {quickSaleCart.length > 0 && (
@@ -945,9 +941,7 @@ export default function CookieDashboard() {
                         </div>
                       )}
 
-                      <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">
-                        Registrar Venda
-                      </button>
+                      <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">Registrar Venda</button>
                     </form>
                   </div>
 
@@ -1000,8 +994,8 @@ export default function CookieDashboard() {
                         <History size={16} /> Ver Histórico Detalhado
                       </button>
                       <div className="flex items-center gap-4 text-xs font-medium mt-1 text-gray-600 dark:text-gray-300">
-                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-600"></div> Receita</span>
-                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500 dark:bg-green-500"></div> Lucro</span>
+                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-300 dark:bg-amber-600"></div> Receita Total</span>
+                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500 dark:bg-green-500"></div> Lucro Real</span>
                       </div>
                     </div>
                   </div>
@@ -1018,12 +1012,16 @@ export default function CookieDashboard() {
                       const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
                       return (
                         <div key={index} className="flex flex-col items-center flex-1 group z-10 h-full justify-end">
-                          <div className="w-full max-w-[48px] relative h-full flex items-end justify-center">
-                            <div className="absolute bottom-0 w-full bg-amber-100 dark:bg-amber-800/50 rounded-t-md group-hover:bg-amber-200 dark:group-hover:bg-amber-700/60 transition-all duration-300" style={{ height: `${revenueHeight}%` }}></div>
-                            <div className="absolute bottom-0 w-full bg-green-400 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-500 dark:group-hover:bg-green-400 transition-all duration-300 shadow-[0_-2px_4px_rgba(0,0,0,0.1)] dark:shadow-[0_-2px_4px_rgba(0,0,0,0.3)]" style={{ height: `${profitHeight}%`, maxWidth: '60%' }}></div>
+                          {/* GRÁFICO DE BARRAS DUPLAS */}
+                          <div className="w-full relative h-full flex items-end justify-center gap-1 sm:gap-2">
+                            
+                            <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%` }}></div>
+                            
+                            <div className="w-3 sm:w-5 bg-green-500 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-400 transition-all duration-300 shadow-[0_-1px_3px_rgba(0,0,0,0.1)] dark:shadow-none" style={{ height: `${profitHeight}%` }}></div>
+                            
                             {data.revenue > 0 && (
                               <div className="absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-800 dark:bg-white text-white dark:text-gray-900 text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
-                                <span className="font-bold">R$ {data.revenue.toFixed(2)}</span>
+                                <span className="font-bold">Rec: R$ {data.revenue.toFixed(2)}</span>
                                 <span className="text-green-300 dark:text-green-600 text-[10px]">Lucro: R$ {data.estimatedProfit.toFixed(2)}</span>
                               </div>
                             )}
@@ -1041,7 +1039,7 @@ export default function CookieDashboard() {
 
           {/* TAB: ESTOQUE E PRODUÇÃO */}
           {activeTab === 'inventory' && (
-            <div className="max-w-6xl mx-auto space-y-6">
+            <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
               <div className="flex justify-between items-end mb-6">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Gestão de Estoque e Produção</h2>
@@ -1169,7 +1167,7 @@ export default function CookieDashboard() {
 
           {/* TAB: CATÁLOGO DE PRODUTOS */}
           {activeTab === 'products' && (
-            <div className="max-w-6xl mx-auto space-y-6">
+            <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
               <div className="flex justify-between items-end mb-6">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Catálogo de Produtos</h2>
@@ -1263,7 +1261,7 @@ export default function CookieDashboard() {
 
           {/* TAB: CUSTOS E SYNC */}
           {activeTab === 'costs' && (
-            <div className="max-w-6xl mx-auto space-y-6">
+            <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
               <div className="flex justify-between items-end mb-6">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Custos & Ficha Técnica</h2>
@@ -1362,7 +1360,7 @@ export default function CookieDashboard() {
 
           {/* TAB: CLIENTES */}
           {activeTab === 'customers' && (
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-6xl mx-auto animate-in fade-in duration-300">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Gerir Clientes</h2>
@@ -1404,7 +1402,7 @@ export default function CookieDashboard() {
 
           {/* TAB: RESERVAS */}
           {activeTab === 'reservations' && (
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-6xl mx-auto animate-in fade-in duration-300">
               <div className="mb-8">
                 <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Reservas e Encomendas</h2>
                 <p className="text-gray-600 dark:text-gray-400 mt-2">Crie encomendas. Ao marcá-las como "Concluídas", o sistema vai enviá-las <b>automaticamente para a sua aba de Vendas</b> e atualizar o cliente!</p>
@@ -1514,7 +1512,7 @@ export default function CookieDashboard() {
 
           {/* TAB: REDE */}
           {activeTab === 'network' && (
-            <div className="max-w-5xl mx-auto h-full flex flex-col">
+            <div className="max-w-5xl mx-auto h-full flex flex-col animate-in fade-in duration-300">
               <div className="mb-6">
                 <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Rede de Indicações</h2>
                 <p className="text-gray-600 dark:text-gray-400 mt-2">Veja a árvore de conexões: descubra quem iniciou a corrente e clique para expandir.</p>
@@ -1535,7 +1533,7 @@ export default function CookieDashboard() {
 
           {/* TAB: SUGESTÕES */}
           {activeTab === 'suggestions' && (
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-6xl mx-auto animate-in fade-in duration-300">
               <div className="flex justify-between items-end mb-8">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Ideias & Sugestões</h2>
@@ -1641,21 +1639,48 @@ export default function CookieDashboard() {
           )}
 
           {/* INDICADORES GLOBAIS NO RODAPÉ */}
-          <div className="fixed bottom-20 md:bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900 dark:bg-black/90 backdrop-blur-md border border-gray-700/50 shadow-[0_10px_40px_rgba(0,0,0,0.3)] rounded-2xl px-6 py-3 flex items-center justify-between gap-4 md:gap-8 z-40 text-white w-[90%] md:w-auto whitespace-nowrap overflow-x-auto">
-             <div className="flex flex-col items-center">
-               <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Faturamento</span>
-               <span className="font-black text-green-400">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
-             </div>
-             <div className="h-6 w-px bg-gray-700/50"></div>
-             <div className="flex flex-col items-center">
-               <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Prod.</span>
-               <span className="font-black text-red-400">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
-             </div>
-             <div className="h-6 w-px bg-gray-700/50"></div>
-             <div className="flex flex-col items-center">
-               <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lucro Líquido</span>
-               <span className="font-black text-amber-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</span>
-             </div>
+          <div className="fixed bottom-20 md:bottom-8 left-1/2 transform -translate-x-1/2 z-40 flex flex-col items-center">
+             {showFooterDetails && (
+               <div className="mb-2 bg-gray-800 dark:bg-gray-900 border border-gray-700 shadow-2xl rounded-2xl p-5 text-sm text-gray-200 w-80 animate-in fade-in slide-in-from-bottom-2">
+                 <div className="flex items-center gap-2 font-bold text-white mb-3 border-b border-gray-700 pb-2">
+                   <Info size={16} className="text-amber-400" /> Resumo Financeiro
+                 </div>
+                 <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-400">Receita Total <span className="text-[10px] block">Todas as Vendas</span></span>
+                    <span className="text-green-400 font-bold">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
+                 </div>
+                 <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-400">Custo Matéria Prima <span className="text-[10px] block">{globalMetrics.totalCookiesSold} un. x R$ {costMetrics.costPerCookie.toFixed(2)}</span></span>
+                    <span className="text-red-400 font-bold">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
+                 </div>
+                 <div className="flex justify-between mt-3 pt-3 border-t border-gray-700">
+                    <span className="font-bold text-white">Lucro Real Final</span>
+                    <span className="text-amber-400 font-black text-lg">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</span>
+                 </div>
+               </div>
+             )}
+
+             <button 
+               onMouseEnter={() => setShowFooterDetails(true)}
+               onMouseLeave={() => setShowFooterDetails(false)}
+               onClick={() => setShowFooterDetails(!showFooterDetails)}
+               className="bg-gray-900 dark:bg-black/90 backdrop-blur-md border border-gray-700/50 shadow-[0_10px_40px_rgba(0,0,0,0.3)] hover:border-amber-500/50 rounded-2xl px-6 py-3 flex items-center justify-between gap-4 md:gap-8 text-white w-[90vw] max-w-lg md:w-auto whitespace-nowrap overflow-x-auto transition-all cursor-help"
+             >
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Faturamento</span>
+                 <span className="font-black text-green-400">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
+               </div>
+               <div className="h-6 w-px bg-gray-700/50"></div>
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Prod.</span>
+                 <span className="font-black text-red-400">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
+               </div>
+               <div className="h-6 w-px bg-gray-700/50"></div>
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lucro Líquido</span>
+                 <span className="font-black text-amber-400 flex items-center gap-1">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)} <Info size={12} className="text-gray-500 hidden md:block" /></span>
+               </div>
+             </button>
           </div>
 
         </main>
