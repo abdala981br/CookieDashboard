@@ -193,10 +193,11 @@ export default function CookieDashboard() {
   const globalMetrics = useMemo(() => {
     const totalRevenue = sales.reduce((acc, curr) => acc + curr.revenue, 0);
     const totalCookiesSold = sales.reduce((acc, curr) => acc + (curr.cookieUnits || curr.quantity), 0);
-    const totalEstimatedProfit = totalRevenue - (totalCookiesSold * costMetrics.costPerCookie);
+    const totalEstimatedCost = totalCookiesSold * costMetrics.costPerCookie;
+    const totalEstimatedProfit = totalRevenue - totalEstimatedCost;
     const ticketMedio = sales.length > 0 ? (totalRevenue / sales.length) : 0;
     const margin = totalRevenue > 0 ? (totalEstimatedProfit / totalRevenue) * 100 : 0;
-    return { totalRevenue, totalCookiesSold, totalEstimatedProfit, ticketMedio, margin };
+    return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit, ticketMedio, margin };
   }, [sales, costMetrics]);
 
   // 2. Desempenho no Tempo (Hoje vs Ontem, Semana vs Semana Passada)
@@ -660,10 +661,11 @@ export default function CookieDashboard() {
     );
   }
 
+  const rootCustomers = customers.filter(c => !c.referredBy);
   const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10); 
   
   return (
-    <div className={`${darkMode ? 'dark' : ''} h-full`}>
+    <div className={`${darkMode ? 'dark' : ''} h-full relative`}>
       <div className="flex h-[100dvh] bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300 overflow-hidden">
         
         {/* Sidebar */}
@@ -698,7 +700,7 @@ export default function CookieDashboard() {
            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
         </div>
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-32 md:pb-32">
           
           {/* TAB: DASHBOARD PRO */}
           {activeTab === 'dashboard' && (
@@ -1635,6 +1637,24 @@ export default function CookieDashboard() {
               </div>
             </div>
           )}
+
+          {/* INDICADORES GLOBAIS NO RODAPÉ */}
+          <div className="fixed bottom-20 md:bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900 dark:bg-black/90 backdrop-blur-md border border-gray-700/50 shadow-[0_10px_40px_rgba(0,0,0,0.3)] rounded-2xl px-6 py-3 flex items-center justify-between gap-4 md:gap-8 z-40 text-white w-[90%] md:w-auto whitespace-nowrap overflow-x-auto">
+             <div className="flex flex-col items-center">
+               <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Faturamento</span>
+               <span className="font-black text-green-400">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
+             </div>
+             <div className="h-6 w-px bg-gray-700/50"></div>
+             <div className="flex flex-col items-center">
+               <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Prod.</span>
+               <span className="font-black text-red-400">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
+             </div>
+             <div className="h-6 w-px bg-gray-700/50"></div>
+             <div className="flex flex-col items-center">
+               <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lucro Líquido</span>
+               <span className="font-black text-amber-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</span>
+             </div>
+          </div>
 
         </main>
       </div>
