@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-// IMPORTAÇÕES DO FIREBASE (Agora com Email/Senha e Recuperação de Senha)
+// IMPORTAÇÕES DO FIREBASE
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
@@ -11,7 +11,7 @@ import {
   CheckCircle, Clock, XCircle, Calculator, DollarSign, TrendingUp,
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
-  AlertCircle, Moon, Sun, LogOut, Lock, Mail
+  AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, TrendingDown
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -47,7 +47,7 @@ export default function CookieDashboard() {
   // ==========================================
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
-  const [authMode, setAuthMode] = useState('login'); // 'login' ou 'register'
+  const [authMode, setAuthMode] = useState('login'); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
@@ -71,10 +71,15 @@ export default function CookieDashboard() {
   const [batchDate, setBatchDate] = useState('');
   const [newCustomer, setNewCustomer] = useState({ name: '', referredBy: '', purchases: 1 });
   const [newSuggestion, setNewSuggestion] = useState({ type: 'flavor', text: '' });
-  const [newReservation, setNewReservation] = useState({ name: '', productId: '', quantity: 1, date: '' });
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
-  const [quickSale, setQuickSale] = useState({ customerName: '', referredBy: '', productId: INITIAL_PRODUCTS[0]?.id || '', quantity: 1, revenue: 10.00 });
   
+  // Carrinhos de Múltiplos Itens (Vendas e Reservas)
+  const [quickSale, setQuickSale] = useState({ customerName: '', referredBy: '', productId: '', quantity: 1, revenue: 0 });
+  const [quickSaleCart, setQuickSaleCart] = useState([]);
+  
+  const [newReservation, setNewReservation] = useState({ name: '', referredBy: '', productId: '', quantity: 1, date: '' });
+  const [reservationCart, setReservationCart] = useState([]);
+
   const [customerSortBy, setCustomerSortBy] = useState('name-asc');
   const [suggestionMatchContext, setSuggestionMatchContext] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -90,59 +95,34 @@ export default function CookieDashboard() {
     return () => unsubscribe();
   }, []);
 
-  // --- FUNÇÕES DE LOGIN/REGISTO ---
   const handleAuthenticate = async (e) => {
     e.preventDefault();
-    setAuthError('');
-    setResetMessage('');
+    setAuthError(''); setResetMessage('');
     try {
-      if (authMode === 'login') {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
-      }
+      if (authMode === 'login') await signInWithEmailAndPassword(auth, email, password);
+      else await createUserWithEmailAndPassword(auth, email, password);
     } catch (error) {
-      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        setAuthError('Email ou senha incorretos.');
-      } else if (error.code === 'auth/email-already-in-use') {
-        setAuthError('Este email já está cadastrado. Tente fazer Login.');
-      } else if (error.code === 'auth/weak-password') {
-        setAuthError('A senha deve ter pelo menos 6 caracteres.');
-      } else {
-        setAuthError('Erro na autenticação: ' + error.message);
-      }
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') setAuthError('Email ou senha incorretos.');
+      else if (error.code === 'auth/email-already-in-use') setAuthError('Este email já está cadastrado. Tente fazer Login.');
+      else if (error.code === 'auth/weak-password') setAuthError('A senha deve ter pelo menos 6 caracteres.');
+      else setAuthError('Erro na autenticação: ' + error.message);
     }
   };
 
   const handleResetPassword = async () => {
-    if (!email) {
-      setAuthError('Por favor, digite o seu email no campo acima para recuperar a senha.');
-      setResetMessage('');
-      return;
-    }
+    if (!email) { setAuthError('Digite o seu email acima para recuperar a senha.'); return; }
     try {
       await sendPasswordResetEmail(auth, email);
-      setResetMessage('Email de recuperação enviado! Verifique a sua caixa de entrada.');
-      setAuthError('');
-    } catch (error) {
-      if (error.code === 'auth/user-not-found') {
-        setAuthError('Não encontrámos nenhuma conta com este email.');
-      } else {
-        setAuthError('Erro ao tentar enviar o email: ' + error.message);
-      }
-      setResetMessage('');
-    }
+      setResetMessage('Email de recuperação enviado! Verifique o Spam.'); setAuthError('');
+    } catch (error) { setAuthError('Erro: ' + error.message); }
   };
 
-  const handleLogout = () => {
-    signOut(auth);
-  };
+  const handleLogout = () => signOut(auth);
 
-  // --- 2. LER DADOS EM TEMPO REAL DA PASTA PRIVADA DO USUÁRIO ---
+  // --- 2. LER DADOS EM TEMPO REAL ---
   useEffect(() => {
     if (!db || !user) return;
     const uid = user.uid;
-    // Agora salvamos na pasta específica deste usuário logado
     const baseArgs = ['artifacts', appId, 'users', uid];
 
     const unsubs = [
@@ -167,32 +147,35 @@ export default function CookieDashboard() {
     return () => unsubs.forEach(fn => fn());
   }, [user]);
 
-  // --- 3. FUNÇÕES PARA GUARDAR NO BANCO (NA PASTA PRIVADA) ---
   const saveToDb = async (col, id, data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id), data); };
   const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
-  // Guardando configurações simples ao alterar
   useEffect(() => { if (db && user) saveConfig({ recipeConfig }); }, [recipeConfig, user]);
   useEffect(() => { if (db && user) saveConfig({ sheetUrl }); }, [sheetUrl, user]);
 
-  // Efeito para auto-calcular o valor da venda rápida baseado no preço atual
+  // Garante que o produto selecionado auto-preenche o preço no carrinho
   useEffect(() => {
-    const selectedProduct = products.find(p => p.id === quickSale.productId);
-    const priceToUse = selectedProduct ? selectedProduct.price : recipeConfig.salePrice;
-    setQuickSale(prev => ({ ...prev, revenue: prev.quantity * priceToUse }));
+    if (!quickSale.productId && products.length > 0) {
+      setQuickSale(prev => ({ ...prev, productId: products[0].id, revenue: products[0].price }));
+    } else {
+      const p = products.find(p => p.id === quickSale.productId);
+      setQuickSale(prev => ({ ...prev, revenue: prev.quantity * (p ? p.price : recipeConfig.salePrice) }));
+    }
   }, [quickSale.quantity, quickSale.productId, products, recipeConfig.salePrice]);
+
+  useEffect(() => {
+    if (!newReservation.productId && products.length > 0) {
+      setNewReservation(prev => ({ ...prev, productId: products[0].id }));
+    }
+  }, [products]);
 
   // --- CÁLCULOS DA FICHA TÉCNICA E CUSTOS ---
   const costMetrics = useMemo(() => {
-    const totalRecipeCost = ingredients.reduce((acc, ing) => {
-      return acc + ((ing.bulkPrice / ing.bulkQty) * ing.recipeQty);
-    }, 0);
-    
+    const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((ing.bulkPrice / ing.bulkQty) * ing.recipeQty), 0);
     const costPerCookie = totalRecipeCost / (recipeConfig.yield || 1);
     const profit = recipeConfig.salePrice - costPerCookie;
     const profitMargin = recipeConfig.salePrice > 0 ? (profit / recipeConfig.salePrice) * 100 : 0;
-
     return { totalRecipeCost, costPerCookie, profit, profitMargin };
   }, [ingredients, recipeConfig]);
 
@@ -200,10 +183,8 @@ export default function CookieDashboard() {
   const weeklyStats = useMemo(() => {
     const stats = [];
     const today = new Date();
-    
     const currentDay = today.getDay();
     const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-    
     const currentMonday = new Date(today);
     currentMonday.setDate(today.getDate() + diffToMonday);
     currentMonday.setHours(0,0,0,0);
@@ -211,15 +192,11 @@ export default function CookieDashboard() {
     for(let i=5; i>=0; i--) {
       const start = new Date(currentMonday);
       start.setDate(currentMonday.getDate() - (i * 7));
-      
       const end = new Date(start);
       end.setDate(start.getDate() + 6);
       end.setHours(23,59,59,999);
-
       const format = (dt) => `${dt.getDate().toString().padStart(2, '0')}/${(dt.getMonth()+1).toString().padStart(2, '0')}`;
-      const label = `${format(start)} a \n${format(end)}`;
-      
-      stats.push({ label, start, end, salesQty: 0, revenue: 0, estimatedProfit: 0 });
+      stats.push({ label: `${format(start)} a \n${format(end)}`, start, end, salesQty: 0, revenue: 0, estimatedProfit: 0 });
     }
 
     sales.forEach(sale => {
@@ -228,11 +205,9 @@ export default function CookieDashboard() {
       if (week) {
         week.salesQty += (sale.cookieUnits || sale.quantity);
         week.revenue += sale.revenue;
-        const cost = costMetrics.costPerCookie * (sale.cookieUnits || sale.quantity);
-        week.estimatedProfit += (sale.revenue - cost);
+        week.estimatedProfit += (sale.revenue - (costMetrics.costPerCookie * (sale.cookieUnits || sale.quantity)));
       }
     });
-
     return stats;
   }, [sales, costMetrics]);
 
@@ -240,26 +215,64 @@ export default function CookieDashboard() {
     const totalRevenue = sales.reduce((acc, curr) => acc + curr.revenue, 0);
     const totalCookiesSold = sales.reduce((acc, curr) => acc + (curr.cookieUnits || curr.quantity), 0);
     const totalEstimatedProfit = totalRevenue - (totalCookiesSold * costMetrics.costPerCookie);
-    
     return { totalRevenue, totalCookiesSold, totalEstimatedProfit };
   }, [sales, costMetrics]);
+
+  // --- 🧠 INTELIGÊNCIA DE NEGÓCIO (INSIGHTS) ---
+  const insights = useMemo(() => {
+    const list = [];
+    // 1. Crescimento Semanal
+    if (weeklyStats.length >= 2) {
+      const currentWeek = weeklyStats[5]; 
+      const lastWeek = weeklyStats[4];
+      if (lastWeek && currentWeek && lastWeek.revenue > 0) {
+          const growth = ((currentWeek.revenue - lastWeek.revenue) / lastWeek.revenue) * 100;
+          if (growth > 0) list.push({ icon: <TrendingUp size={20}/>, text: `As vendas desta semana subiram ${growth.toFixed(1)}% em relação à semana passada! 🚀`, color: 'text-green-500 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-500/20' });
+          else if (growth < 0) list.push({ icon: <TrendingDown size={20}/>, text: `As vendas caíram ${Math.abs(growth).toFixed(1)}% esta semana. Que tal uma promoção ou aviso no WhatsApp? 📢`, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-100 dark:bg-orange-400/20' });
+      }
+    }
+
+    // 2. Produtos Estrela e Lucro
+    if (products.length > 0 && sales.length > 0) {
+        const pStats = products.map(p => {
+            const s = sales.filter(sale => sale.productName === p.name);
+            return { 
+                name: p.name, 
+                qty: s.reduce((a,b)=>a+(b.cookieUnits||b.quantity),0), 
+                profit: s.reduce((a,b)=>a+(b.revenue - ((b.cookieUnits||b.quantity)*costMetrics.costPerCookie)),0) 
+            };
+        });
+        const topQty = [...pStats].sort((a,b)=>b.qty - a.qty)[0];
+        const topProfit = [...pStats].sort((a,b)=>b.profit - a.profit)[0];
+        
+        if (topQty && topQty.qty > 0) list.push({ icon: <Trophy size={20}/>, text: `O seu campeão de vendas absoluto é o "${topQty.name}" com ${topQty.qty} unidades vendidas. 👑`, color: 'text-yellow-600 dark:text-yellow-400', bg: 'bg-yellow-100 dark:bg-yellow-400/20' });
+        if (topProfit && topProfit.profit > 0 && topProfit.name !== topQty?.name) list.push({ icon: <DollarSign size={20}/>, text: `Galinha dos Ovos de Ouro: O "${topProfit.name}" é o produto que te deixa mais dinheiro no bolso no final do dia. 💰`, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-400/20' });
+    }
+
+    // 3. Projeção Mensal
+    const currentMonth = new Date().getMonth();
+    const revThisMonth = sales.filter(s => new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
+    const daysPassed = new Date().getDate();
+    const daysInMonth = new Date(new Date().getFullYear(), currentMonth + 1, 0).getDate();
+    const projection = (revThisMonth / daysPassed) * daysInMonth;
+    if (projection > 0) {
+        list.push({ icon: <Target size={20}/>, text: `Projeção Mensal: Se mantiver este ritmo de vendas diárias, vai fechar o mês com R$ ${projection.toFixed(2)}! 🎯`, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-400/20' });
+    }
+
+    return list;
+  }, [weeklyStats, sales, products, costMetrics]);
 
   // --- CÁLCULOS DE PREVISÃO E RESERVAS ---
   const pendingReservationsList = useMemo(() => {
     return reservations.filter(r => r.status === 'pending').sort((a, b) => {
-      if (!a.date) return 1;
-      if (!b.date) return -1;
+      if (!a.date) return 1; if (!b.date) return -1;
       return new Date(a.date) - new Date(b.date);
     });
   }, [reservations]);
 
   const expectedMetrics = useMemo(() => {
-    let revenue = 0;
-    let cookies = 0;
-    pendingReservationsList.forEach(r => {
-      revenue += r.expectedRevenue || 0;
-      cookies += r.cookieUnits || r.quantity || 0;
-    });
+    let revenue = 0; let cookies = 0;
+    pendingReservationsList.forEach(r => { revenue += r.expectedRevenue || 0; cookies += r.cookieUnits || r.quantity || 0; });
     const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
     return { revenue, cookies, batchesNeeded };
   }, [pendingReservationsList, recipeConfig.yield]);
@@ -269,11 +282,7 @@ export default function CookieDashboard() {
     return customers.map(customer => {
       const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
       const referrer = customers.find(c => c.id === customer.referredBy);
-      return {
-        ...customer,
-        referralsCount,
-        referrerName: referrer ? referrer.name : 'Ninguém (Direto)'
-      };
+      return { ...customer, referralsCount, referrerName: referrer ? referrer.name : 'Ninguém (Direto)' };
     });
   }, [customers]);
 
@@ -289,70 +298,155 @@ export default function CookieDashboard() {
     return sorted;
   }, [customersWithStats, customerSortBy]);
 
-  const topReferrers = useMemo(() => {
-    return [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 3);
-  }, [customersWithStats]);
-
+  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 3), [customersWithStats]);
 
   // ==========================================
   // HANDLERS (AÇÕES)
   // ==========================================
-  const handleQuickSale = (e) => {
+  
+  // Lógica do Carrinho de Venda Rápida
+  const handleAddToCartQuickSale = () => {
+    const p = products.find(prod => prod.id === quickSale.productId);
+    if (!p) return;
+    setQuickSaleCart([...quickSaleCart, {
+      productId: p.id, productName: p.name,
+      quantity: Number(quickSale.quantity),
+      cookieUnits: (p.units || 1) * Number(quickSale.quantity),
+      revenue: Number(quickSale.revenue)
+    }]);
+    setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p.price }));
+  };
+
+  const handleFinalizeQuickSale = (e) => {
     e.preventDefault();
     if (!quickSale.customerName || !user) return;
 
-    const selectedProduct = products.find(p => p.id === quickSale.productId);
-    const productName = selectedProduct ? selectedProduct.name : 'Avulso';
-    const cookieUnits = selectedProduct ? (selectedProduct.units || 1) * Number(quickSale.quantity) : Number(quickSale.quantity);
+    let finalCart = [...quickSaleCart];
+    // Se o utilizador preencheu as quantidades mas não clicou em "Adicionar", adicionamos automaticamente
+    if (quickSale.quantity > 0 && quickSale.revenue > 0) {
+      const p = products.find(prod => prod.id === quickSale.productId);
+      if (p) finalCart.push({
+        productId: p.id, productName: p.name,
+        quantity: Number(quickSale.quantity),
+        cookieUnits: (p.units || 1) * Number(quickSale.quantity),
+        revenue: Number(quickSale.revenue)
+      });
+    }
 
-    const newSaleId = Math.random().toString(36).substr(2, 9);
-    const newSaleObj = {
-      id: newSaleId,
-      date: new Date().toISOString(),
-      quantity: Number(quickSale.quantity), 
-      cookieUnits: cookieUnits, 
-      revenue: Number(quickSale.revenue),
-      customerName: quickSale.customerName.trim(),
-      productName: productName
-    };
-    saveToDb('sales', newSaleId, newSaleObj);
+    if (finalCart.length === 0) return;
+
+    // Regista cada item do carrinho como uma venda isolada para o mesmo cliente
+    finalCart.forEach(item => {
+      const newSaleId = Math.random().toString(36).substr(2, 9);
+      saveToDb('sales', newSaleId, {
+        id: newSaleId, date: new Date().toISOString(),
+        quantity: item.quantity, cookieUnits: item.cookieUnits, 
+        revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName
+      });
+    });
 
     const existingCustomer = customers.find(c => c.name.toLowerCase() === quickSale.customerName.toLowerCase().trim());
     if (existingCustomer) {
       saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
     } else {
       const newCustId = Math.random().toString(36).substr(2, 9);
-      saveToDb('customers', newCustId, { 
-        id: newCustId, 
-        name: quickSale.customerName.trim(), 
-        referredBy: quickSale.referredBy || null, 
-        purchases: 1 
+      saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: quickSale.referredBy || null, purchases: 1 });
+    }
+
+    setQuickSaleCart([]);
+    setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice });
+  };
+
+  // Lógica do Carrinho de Reservas
+  const handleAddToCartReservation = () => {
+    const p = products.find(prod => prod.id === newReservation.productId);
+    if (!p) return;
+    setReservationCart([...reservationCart, {
+      productId: p.id, productName: p.name,
+      quantity: Number(newReservation.quantity),
+      cookieUnits: (p.units || 1) * Number(newReservation.quantity),
+      expectedRevenue: p.price * Number(newReservation.quantity)
+    }]);
+    setNewReservation(prev => ({ ...prev, quantity: 1 }));
+  };
+
+  const handleFinalizeReservation = (e) => {
+    e.preventDefault();
+    if (!newReservation.name || !user) return;
+
+    let finalCart = [...reservationCart];
+    if (newReservation.quantity > 0) {
+      const p = products.find(prod => prod.id === newReservation.productId);
+      if (p) finalCart.push({
+        productId: p.id, productName: p.name,
+        quantity: Number(newReservation.quantity),
+        cookieUnits: (p.units || 1) * Number(newReservation.quantity),
+        expectedRevenue: p.price * Number(newReservation.quantity)
       });
     }
 
-    setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice });
+    if (finalCart.length === 0) return;
+
+    finalCart.forEach(item => {
+      const newId = Math.random().toString(36).substr(2, 9);
+      saveToDb('reservations', newId, { 
+        id: newId, name: newReservation.name, referredBy: newReservation.referredBy || null,
+        productId: item.productId, productName: item.productName,
+        quantity: item.quantity, cookieUnits: item.cookieUnits, expectedRevenue: item.expectedRevenue,
+        date: newReservation.date, status: 'pending' 
+      });
+    });
+
+    setReservationCart([]);
+    setNewReservation({ name: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, date: '' });
   };
+  
+  // AUTOMAÇÃO: Reserva Concluída -> Venda Automática
+  const handleUpdateReservationStatus = (id, status) => {
+    const r = reservations.find(x => x.id === id);
+    if (r && user) {
+      saveToDb('reservations', id, { ...r, status });
+      
+      // Se foi concluída, envia para vendas automaticamente
+      if (status === 'completed' && r.status !== 'completed') {
+          const newSaleId = Math.random().toString(36).substr(2, 9);
+          saveToDb('sales', newSaleId, {
+              id: newSaleId, date: new Date().toISOString(),
+              quantity: r.quantity, cookieUnits: r.cookieUnits, 
+              revenue: r.expectedRevenue, customerName: r.name, productName: r.productName
+          });
+
+          const existingCustomer = customers.find(c => c.name.toLowerCase() === r.name.toLowerCase().trim());
+          if (existingCustomer) {
+              saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
+          } else {
+              const newCustId = Math.random().toString(36).substr(2, 9);
+              saveToDb('customers', newCustId, { 
+                  id: newCustId, name: r.name.trim(), 
+                  referredBy: r.referredBy || null, purchases: 1 
+              });
+          }
+      }
+    }
+  };
+
+  const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
 
   const handleAddProduct = (e) => {
     e.preventDefault();
     if (!newProduct.name || !newProduct.price || !user) return;
     const newId = Math.random().toString(36).substr(2, 9);
     saveToDb('products', newId, { 
-      id: newId, 
-      name: newProduct.name, 
-      price: Number(newProduct.price),
-      type: newProduct.type,
-      units: newProduct.type === 'combo' ? Number(newProduct.units) : 1
+      id: newId, name: newProduct.name, price: Number(newProduct.price), type: newProduct.type, units: newProduct.type === 'combo' ? Number(newProduct.units) : 1
     });
     setNewProduct({ name: '', price: '', type: 'single', units: 2 });
   };
-
   const handleDeleteProduct = (id) => { if(user) deleteFromDb('products', id); };
 
+  // --- LÓGICA DA PLANILHA ---
   const handleSyncSheet = async () => {
     if (!sheetUrl) { alert("Por favor, cole o link da sua planilha."); return; }
     setIsSyncing(true);
-
     try {
       let fetchUrl = sheetUrl;
       if (fetchUrl.includes('pubhtml')) { fetchUrl = fetchUrl.replace('pubhtml', 'pub') + (fetchUrl.includes('?') ? '&output=csv' : '?output=csv'); } 
@@ -360,7 +454,6 @@ export default function CookieDashboard() {
 
       const response = await fetch(fetchUrl);
       if (!response.ok) throw new Error("Não foi possível aceder à planilha. Verifique o link.");
-      
       const csvText = await response.text();
       const lines = csvText.split('\n').filter(line => line.trim() !== '');
       const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.toLowerCase().trim());
@@ -390,20 +483,12 @@ export default function CookieDashboard() {
           const name = clean(row[nameIdx]);
           if (!name) continue;
           let rQty = parseNumber(row[recipeQtyIdx]);
-          
           if (rQty === 0) {
             for (let j = 3; j < row.length; j++) {
-              if (j !== bulkPriceIdx && j !== bulkQtyIdx) {
-                let val = parseNumber(row[j]);
-                if (val > 0) { rQty = val; break; }
-              }
+              if (j !== bulkPriceIdx && j !== bulkQtyIdx) { let val = parseNumber(row[j]); if (val > 0) { rQty = val; break; } }
             }
           }
-
-          parsedIngredients.push({
-            id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]),
-            unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty
-          });
+          parsedIngredients.push({ id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]), unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty });
         }
       }
 
@@ -411,41 +496,30 @@ export default function CookieDashboard() {
          setIngredients(parsedIngredients);
          const syncTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
          setLastSync(syncTime);
-
          if (user) {
              ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
              parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
              saveConfig({ lastSync: syncTime });
          }
       } else { alert("Nenhum ingrediente encontrado. Verifique a planilha."); }
-        
     } catch (error) {
       console.error("Erro na leitura da planilha:", error);
       alert("Erro ao ler planilha. Garanta que ela foi publicada na web em formato CSV.");
-    } finally {
-      setIsSyncing(false);
-    }
+    } finally { setIsSyncing(false); }
   };
 
   const handleDeleteCustomer = (id) => {
     if (!user) return;
     deleteFromDb('customers', id);
-    customers.forEach(c => {
-      if (c.referredBy === id) saveToDb('customers', c.id, { ...c, referredBy: null });
-    });
+    customers.forEach(c => { if (c.referredBy === id) saveToDb('customers', c.id, { ...c, referredBy: null }); });
   };
 
-  // Sugestões
   const handleAddSuggestion = (e) => {
     e.preventDefault();
     if (!newSuggestion.text || !user) return;
     const normalizedInput = newSuggestion.text.toLowerCase().trim();
     const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text.toLowerCase().includes(normalizedInput) || normalizedInput.includes(s.text.toLowerCase())));
-
-    if (matches.length > 0 && !suggestionMatchContext) {
-      setSuggestionMatchContext({ pendingSuggestion: newSuggestion, match: matches[0] });
-      return;
-    }
+    if (matches.length > 0 && !suggestionMatchContext) { setSuggestionMatchContext({ pendingSuggestion: newSuggestion, match: matches[0] }); return; }
     proceedAddSuggestion();
   };
 
@@ -453,79 +527,21 @@ export default function CookieDashboard() {
     const newId = Math.random().toString(36).substr(2, 9);
     const idea = suggestionMatchContext ? suggestionMatchContext.pendingSuggestion : newSuggestion;
     saveToDb('suggestions', newId, { id: newId, ...idea, votes: 1, isFavorite: false });
-    setNewSuggestion({ type: 'flavor', text: '' });
-    setSuggestionMatchContext(null);
+    setNewSuggestion({ type: 'flavor', text: '' }); setSuggestionMatchContext(null);
   };
-
-  const acceptSuggestionMatch = () => {
-    handleUpvoteSuggestion(suggestionMatchContext.match.id);
-    setNewSuggestion({ type: 'flavor', text: '' });
-    setSuggestionMatchContext(null);
-  };
-
+  const acceptSuggestionMatch = () => { handleUpvoteSuggestion(suggestionMatchContext.match.id); setNewSuggestion({ type: 'flavor', text: '' }); setSuggestionMatchContext(null); };
   const handleDeleteSuggestion = (id) => user && deleteFromDb('suggestions', id);
-  const handleToggleFavorite = (id) => {
-    const s = suggestions.find(x => x.id === id);
-    if(s && user) saveToDb('suggestions', id, { ...s, isFavorite: !s.isFavorite });
-  };
-  const handleUpvoteSuggestion = (id) => {
-    const s = suggestions.find(x => x.id === id);
-    if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 });
-  };
+  const handleToggleFavorite = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, isFavorite: !s.isFavorite }); };
+  const handleUpvoteSuggestion = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 }); };
 
-  // Reservas
-  const handleAddReservation = (e) => {
-    e.preventDefault();
-    if (!newReservation.name || !newReservation.productId || !user) return;
-    
-    const selectedProduct = products.find(p => p.id === newReservation.productId);
-    if (!selectedProduct) return;
-
-    const newId = Math.random().toString(36).substr(2, 9);
-    const cookieUnits = (selectedProduct.units || 1) * Number(newReservation.quantity);
-    const expectedRevenue = selectedProduct.price * Number(newReservation.quantity);
-
-    saveToDb('reservations', newId, { 
-      id: newId, 
-      name: newReservation.name,
-      productId: selectedProduct.id,
-      productName: selectedProduct.name,
-      quantity: Number(newReservation.quantity),
-      cookieUnits: cookieUnits,
-      expectedRevenue: expectedRevenue,
-      date: newReservation.date, 
-      status: 'pending' 
-    });
-    setNewReservation({ name: '', productId: '', quantity: 1, date: '' });
-  };
-  
-  const handleUpdateReservationStatus = (id, status) => {
-    const r = reservations.find(x => x.id === id);
-    if (r && user) saveToDb('reservations', id, { ...r, status });
-  };
-  const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
-
-  // --- COMPONENTES AUXILIARES ---
   const NetworkNode = ({ customer, isRoot = false }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const children = customers.filter(c => c.referredBy === customer.id);
     const hasChildren = children.length > 0;
-
     return (
       <div className={`relative ${!isRoot ? 'ml-8 mt-4' : 'mb-8'}`}>
-        {!isRoot && (
-          <>
-            <div className="absolute -left-6 top-6 w-6 border-t-2 border-amber-200 dark:border-gray-600"></div>
-            <div className="absolute -left-6 -top-4 h-10 border-l-2 border-amber-200 dark:border-gray-600"></div>
-          </>
-        )}
-        
-        <div 
-          onClick={() => hasChildren && setIsExpanded(!isExpanded)}
-          className={`flex items-center gap-3 p-3 rounded-xl shadow-sm w-fit z-10 relative transition-colors ${
-            isRoot ? 'bg-amber-50 dark:bg-amber-900/30 border-2 border-amber-200 dark:border-amber-700/50 hover:bg-amber-100 dark:hover:bg-amber-900/50' : 'bg-white dark:bg-gray-800 border border-amber-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
-          } ${hasChildren ? 'cursor-pointer' : ''}`}
-        >
+        {!isRoot && ( <><div className="absolute -left-6 top-6 w-6 border-t-2 border-amber-200 dark:border-gray-600"></div><div className="absolute -left-6 -top-4 h-10 border-l-2 border-amber-200 dark:border-gray-600"></div></> )}
+        <div onClick={() => hasChildren && setIsExpanded(!isExpanded)} className={`flex items-center gap-3 p-3 rounded-xl shadow-sm w-fit z-10 relative transition-colors ${isRoot ? 'bg-amber-50 dark:bg-amber-900/30 border-2 border-amber-200 dark:border-amber-700/50 hover:bg-amber-100 dark:hover:bg-amber-900/50' : 'bg-white dark:bg-gray-800 border border-amber-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'} ${hasChildren ? 'cursor-pointer' : ''}`}>
           <div className={`p-2 rounded-full ${isRoot ? 'bg-amber-600 text-white' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'}`}>
             {isRoot ? <Network size={20} /> : <Cookie size={20} />}
           </div>
@@ -536,27 +552,13 @@ export default function CookieDashboard() {
               {customer.purchases} pedidos {hasChildren && `• ${children.length} indicações`}
             </p>
           </div>
-          {hasChildren && (
-            <div className="ml-2 text-amber-600 dark:text-amber-400">
-              {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-            </div>
-          )}
+          {hasChildren && (<div className="ml-2 text-amber-600 dark:text-amber-400">{isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}</div>)}
         </div>
-        
-        {hasChildren && isExpanded && (
-          <div className="relative border-l-2 border-amber-200 dark:border-gray-600 ml-[1.5rem] mt-2">
-            {children.map(child => <NetworkNode key={child.id} customer={child} />)}
-          </div>
-        )}
+        {hasChildren && isExpanded && (<div className="relative border-l-2 border-amber-200 dark:border-gray-600 ml-[1.5rem] mt-2">{children.map(child => <NetworkNode key={child.id} customer={child} />)}</div>)}
       </div>
     );
   };
 
-  // ==========================================
-  // RENDERIZAÇÕES PRINCIPAIS (TELA DE LOGIN E DASHBOARD)
-  // ==========================================
-
-  // 1. TELA DE CARREGAMENTO (Verificando se já está logado)
   if (loadingAuth) {
     return (
       <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex flex-col items-center justify-center p-4">
@@ -566,82 +568,45 @@ export default function CookieDashboard() {
     );
   }
 
-  // 2. TELA DE LOGIN / REGISTO
   if (!user) {
     return (
       <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex items-center justify-center p-4 transition-colors">
         <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border border-amber-100 dark:border-gray-700 w-full max-w-md">
           <div className="flex justify-center mb-6">
-            <div className="bg-amber-100 dark:bg-amber-900/50 p-4 rounded-full text-amber-600 dark:text-amber-400">
-              <Cookie size={40} />
-            </div>
+            <div className="bg-amber-100 dark:bg-amber-900/50 p-4 rounded-full text-amber-600 dark:text-amber-400"><Cookie size={40} /></div>
           </div>
           <h1 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100 mb-2">Bem-vindo ao CookieDash</h1>
-          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">
-            {authMode === 'login' ? 'Entre na sua conta para aceder ao painel.' : 'Crie a sua conta de administrador.'}
-          </p>
-
-          {authError && (
-            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">
-              {authError}
-            </div>
-          )}
-          
-          {resetMessage && (
-            <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl text-green-600 dark:text-green-400 text-sm font-medium text-center">
-              {resetMessage}
-            </div>
-          )}
-
+          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">{authMode === 'login' ? 'Entre na sua conta para aceder ao painel.' : 'Crie a sua conta de administrador.'}</p>
+          {authError && (<div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">{authError}</div>)}
+          {resetMessage && (<div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl text-green-600 dark:text-green-400 text-sm font-medium text-center">{resetMessage}</div>)}
           <form onSubmit={handleAuthenticate} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input 
-                  type="email" 
-                  required 
-                  className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" 
-                  placeholder="seu@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
+                <input type="email" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Senha</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input 
-                  type="password" 
-                  required 
-                  className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" 
-                  placeholder="Mínimo de 6 caracteres"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+                <input type="password" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="Mínimo de 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
               {authMode === 'login' && (
                 <div className="text-right mt-2">
-                  <button type="button" onClick={handleResetPassword} className="text-xs text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400 font-medium transition-colors">
-                    Esqueci a minha senha
-                  </button>
+                  <button type="button" onClick={handleResetPassword} className="text-xs text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400 font-medium transition-colors">Esqueci a minha senha</button>
                 </div>
               )}
             </div>
-            
             <button type="submit" className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-colors mt-4 shadow-md">
               {authMode === 'login' ? 'Entrar no Dashboard' : 'Criar Conta e Entrar'}
             </button>
           </form>
-
           <div className="mt-8 text-center border-t border-gray-100 dark:border-gray-700 pt-6">
             <p className="text-gray-600 dark:text-gray-400 text-sm">
               {authMode === 'login' ? 'Ainda não tem conta?' : 'Já tem uma conta?'}
-              <button 
-                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); setResetMessage(''); }}
-                className="ml-2 font-bold text-amber-600 dark:text-amber-500 hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
-              >
+              <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); setResetMessage(''); }} className="ml-2 font-bold text-amber-600 dark:text-amber-500 hover:text-amber-700 dark:hover:text-amber-400 transition-colors">
                 {authMode === 'login' ? 'Registe-se aqui' : 'Faça Login'}
               </button>
             </p>
@@ -651,70 +616,46 @@ export default function CookieDashboard() {
     );
   }
 
-  // 3. DASHBOARD PRINCIPAL (Só renderiza se `user` existir)
   const rootCustomers = customers.filter(c => !c.referredBy);
   const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10); 
-  const singleProducts = products.filter(p => p.type === 'single' || !p.type);
-  const comboProducts = products.filter(p => p.type === 'combo');
-
+  
   return (
-    <div className={`${darkMode ? 'dark' : ''}`}>
-      <div className="flex h-screen bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-200">
+    <div className={`${darkMode ? 'dark' : ''} h-full`}>
+      {/* Ajustado de h-screen para h-[100dvh] para evitar cortes de fundo no mobile */}
+      <div className="flex h-[100dvh] bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300 overflow-hidden">
         
-        {/* Sidebar */}
-        <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-200">
-          <div className="p-6 flex items-center gap-3">
-            <Cookie size={32} className="text-amber-300" />
-            <h1 className="text-2xl font-bold tracking-tight">CookieDash</h1>
-          </div>
-          
+        <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
+          <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
-            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <BarChart3 size={20} /> Visão Geral
-            </button>
-            <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <ShoppingBag size={20} /> Catálogo de Produtos
-            </button>
-            <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <Users size={20} /> Clientes
-            </button>
-            <button onClick={() => setActiveTab('costs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'costs' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <Calculator size={20} /> Custos & Sync
-            </button>
-            <button onClick={() => setActiveTab('reservations')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'reservations' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <CalendarCheck size={20} /> Reservas
-            </button>
-            <button onClick={() => setActiveTab('network')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'network' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <Network size={20} /> Rede de Indicações
-            </button>
-            <button onClick={() => setActiveTab('suggestions')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'suggestions' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
-              <Lightbulb size={20} /> Ideias & Sugestões
-            </button>
+            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral</button>
+            <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo de Produtos</button>
+            <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
+            <button onClick={() => setActiveTab('costs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'costs' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Calculator size={20} /> Custos & Sync</button>
+            <button onClick={() => setActiveTab('reservations')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'reservations' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><CalendarCheck size={20} /> Reservas</button>
+            <button onClick={() => setActiveTab('network')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'network' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Network size={20} /> Rede</button>
+            <button onClick={() => setActiveTab('suggestions')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'suggestions' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Lightbulb size={20} /> Ideias</button>
           </nav>
-
           <div className="mt-auto px-4 pb-6 space-y-2">
-            {/* Botão de Tema */}
-            <button 
-              onClick={() => setDarkMode(!darkMode)} 
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors hover:bg-amber-800/50 dark:hover:bg-gray-800 text-amber-200 dark:text-gray-400 hover:text-white border border-amber-800 dark:border-gray-800"
-            >
-              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-              <span className="font-medium text-sm">{darkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
+            <button onClick={() => setDarkMode(!darkMode)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors hover:bg-amber-800/50 dark:hover:bg-gray-800 text-amber-200 dark:text-gray-400 hover:text-white border border-amber-800 dark:border-gray-800">
+              {darkMode ? <Sun size={18} /> : <Moon size={18} />} <span className="font-medium text-sm">{darkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
             </button>
-
-            {/* Botão de Sair/Logout */}
-            <button 
-              onClick={handleLogout} 
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors bg-red-900/40 hover:bg-red-800/60 text-red-200 hover:text-white border border-red-800/50"
-            >
-              <LogOut size={18} />
-              <span className="font-medium text-sm">Sair da Conta</span>
+            <button onClick={handleLogout} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors bg-red-900/40 hover:bg-red-800/60 text-red-200 hover:text-white border border-red-800/50">
+              <LogOut size={18} /> <span className="font-medium text-sm">Sair da Conta</span>
             </button>
           </div>
         </aside>
 
+        {/* Menu Mobile Simplificado */}
+        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex justify-around p-3 z-50">
+           <button onClick={() => setActiveTab('dashboard')} className={`p-2 rounded-lg ${activeTab === 'dashboard' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><BarChart3 size={24}/></button>
+           <button onClick={() => setActiveTab('products')} className={`p-2 rounded-lg ${activeTab === 'products' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ShoppingBag size={24}/></button>
+           <button onClick={() => setActiveTab('reservations')} className={`p-2 rounded-lg ${activeTab === 'reservations' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><CalendarCheck size={24}/></button>
+           <button onClick={() => setActiveTab('costs')} className={`p-2 rounded-lg ${activeTab === 'costs' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Calculator size={24}/></button>
+           <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
+        </div>
+
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto p-8">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
           
           {/* TAB: DASHBOARD & VENDAS */}
           {activeTab === 'dashboard' && (
@@ -727,12 +668,33 @@ export default function CookieDashboard() {
                 <div className="flex items-center gap-3 bg-white dark:bg-gray-800 p-2 rounded-xl border border-amber-100 dark:border-gray-700 shadow-sm transition-colors">
                   {lastSync && <span className="text-xs text-gray-500 dark:text-gray-400 font-medium flex items-center gap-1 pl-2"><Clock size={12}/> {lastSync}</span>}
                   <button onClick={handleSyncSheet} disabled={isSyncing} className="bg-amber-100 dark:bg-amber-900/50 hover:bg-amber-200 dark:hover:bg-amber-800/50 text-amber-800 dark:text-amber-400 text-sm font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-70">
-                    <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} />
-                    {isSyncing ? "Lendo..." : "Sincronizar Planilha"}
+                    <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} /> {isSyncing ? "Lendo..." : "Sincronizar"}
                   </button>
                 </div>
               </div>
               
+              {/* INSIGHTS AUTOMÁTICOS (NOVO) */}
+              {insights.length > 0 && (
+                <div className="bg-amber-900 dark:bg-gray-950 p-6 rounded-3xl shadow-lg text-white mb-6 border border-transparent dark:border-gray-800 transition-colors relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-amber-700/30 dark:bg-amber-900/20 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
+                  <h3 className="text-xl font-bold flex items-center gap-2 mb-4 relative z-10">
+                    <Zap className="text-amber-400" /> Inteligência do Negócio
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
+                    {insights.map((insight, idx) => (
+                      <div key={idx} className="bg-white/10 dark:bg-gray-800/50 p-4 rounded-2xl flex flex-col gap-3 backdrop-blur-sm border border-white/5 dark:border-gray-700 transition-colors">
+                        <div className={`w-fit p-2 rounded-xl ${insight.bg} ${insight.color}`}>
+                          {insight.icon}
+                        </div>
+                        <p className="text-sm font-medium leading-relaxed text-amber-50 dark:text-gray-300">
+                          {insight.text}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Cards de Métricas Globais */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
@@ -742,7 +704,6 @@ export default function CookieDashboard() {
                   </div>
                   <DollarSign className="absolute -bottom-2 -right-2 text-green-50/50 dark:text-gray-700 w-20 h-20" />
                 </div>
-                
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
                   <div className="relative z-10">
                     <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Lucro Estimado</p>
@@ -750,7 +711,6 @@ export default function CookieDashboard() {
                   </div>
                   <TrendingUp className="absolute -bottom-2 -right-2 text-green-50 dark:text-gray-700 w-20 h-20" />
                 </div>
-
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
                   <div className="relative z-10">
                     <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Cookies Vendidos</p>
@@ -758,7 +718,6 @@ export default function CookieDashboard() {
                   </div>
                   <Cookie className="absolute -bottom-2 -right-2 text-amber-50 dark:text-gray-700 w-20 h-20" />
                 </div>
-
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
                   <div className="relative z-10">
                     <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Base de Clientes</p>
@@ -768,98 +727,20 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
-              {/* SEÇÃO DE PREVISÕES E AGENDA */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                <div className="lg:col-span-2 bg-amber-50 dark:bg-gray-800/80 rounded-3xl shadow-sm border-2 border-amber-300 dark:border-amber-700/50 p-6 flex flex-col justify-between relative overflow-hidden transition-colors">
-                  <div>
-                    <h3 className="text-xl font-bold flex items-center gap-2 mb-2 text-amber-900 dark:text-amber-400"><Calendar className="text-amber-600 dark:text-amber-500"/> Planejamento & Previsões</h3>
-                    <p className="text-amber-800/80 dark:text-gray-400 text-sm mb-6">Acompanhe as encomendas pendentes e planeje sua próxima produção de fornadas.</p>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 relative z-10">
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-amber-100 dark:border-gray-700 shadow-sm transition-colors">
-                      <p className="text-gray-500 dark:text-gray-400 text-xs font-medium mb-1">Faturamento Previsto</p>
-                      <p className="text-2xl font-bold text-gray-800 dark:text-gray-100">R$ {expectedMetrics.revenue.toFixed(2)}</p>
-                    </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-amber-100 dark:border-gray-700 shadow-sm transition-colors">
-                      <p className="text-gray-500 dark:text-gray-400 text-xs font-medium mb-1">Cookies a Produzir</p>
-                      <p className="text-2xl font-bold text-gray-800 dark:text-gray-100">{expectedMetrics.cookies} <span className="text-sm font-normal text-gray-500">un.</span></p>
-                    </div>
-                    <div className={`p-4 rounded-2xl border transition-colors shadow-sm flex flex-col justify-center ${expectedMetrics.batchesNeeded > 0 ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700' : 'bg-white dark:bg-gray-900 border-amber-100 dark:border-gray-700'}`}>
-                      <div className="flex justify-between items-start mb-1">
-                         <p className="text-gray-600 dark:text-gray-400 text-xs font-medium">Previsão de Fornadas</p>
-                         {expectedMetrics.batchesNeeded > 0 && <AlertCircle size={14} className="text-amber-600 dark:text-amber-400" title="Bater novas fornadas necessárias"/>}
-                      </div>
-                      <div className="flex items-center gap-2 justify-between mt-1">
-                        <p className={`text-2xl font-bold ${expectedMetrics.batchesNeeded > 0 ? 'text-amber-800 dark:text-amber-400' : 'text-gray-800 dark:text-gray-100'}`}>{expectedMetrics.batchesNeeded}</p>
-                        <div className="flex flex-col items-end">
-                          <label className="text-[9px] text-gray-500 dark:text-gray-400 mb-0.5 uppercase tracking-wider">Data Estipulada</label>
-                          <input type="date" value={batchDate} onChange={(e) => setBatchDate(e.target.value)} className="text-xs bg-white/60 dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded px-1.5 py-1 outline-none text-gray-700 dark:text-gray-300 focus:border-amber-500 dark:focus:border-amber-500 cursor-pointer" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="lg:col-span-1 bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 p-6 flex flex-col transition-colors">
-                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-4">
-                    <Clock className="text-amber-600 dark:text-amber-500" size={20}/> Próximas Entregas
-                  </h3>
-                  <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-                    {pendingReservationsList.length === 0 ? (
-                      <p className="text-sm text-gray-400 text-center mt-4">Nenhuma encomenda pendente.</p>
-                    ) : (
-                      pendingReservationsList.slice(0, 5).map(res => (
-                        <div key={res.id} className="flex justify-between items-center p-3 bg-amber-50/50 dark:bg-gray-700/50 rounded-xl border border-amber-100/50 dark:border-gray-600 transition-colors">
-                          <div>
-                            <p className="font-bold text-sm text-gray-800 dark:text-gray-200 truncate max-w-[120px]" title={res.name}>{res.name}</p>
-                            <p className="text-[10px] text-gray-500 dark:text-gray-400">{res.quantity}x {res.productName}</p>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-gray-800 px-2 py-1 rounded-lg whitespace-nowrap border border-transparent dark:border-gray-600">
-                              {res.date ? new Date(res.date).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'}) : 'A comb.'}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Formulário Rápido de Nova Venda */}
-                <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative overflow-hidden flex flex-col transition-colors">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500 dark:bg-amber-600 rounded-full blur-3xl -mr-10 -mt-10 opacity-50"></div>
+                {/* Formulário Rápido de Nova Venda (Agora com Carrinho!) */}
+                <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative flex flex-col transition-colors">
+                  <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500 dark:bg-amber-600 rounded-full blur-3xl -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
                   
                   <h3 className="text-xl font-bold mb-6 flex items-center gap-2 relative z-10">
                     <ShoppingCart size={22} /> Nova Venda Rápida
                   </h3>
                   
-                  <form onSubmit={handleQuickSale} className="space-y-4 relative z-10 flex-1 flex flex-col">
+                  <form onSubmit={handleFinalizeQuickSale} className="space-y-4 relative z-10 flex-1 flex flex-col">
                     <div>
                       <label className="block text-xs font-medium text-amber-100 mb-1">Nome do Cliente</label>
                       <input required type="text" className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Ex: Maria" />
                     </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-amber-100 mb-1">Produto ou Combo</label>
-                      <select required className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
-                        {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
-                          <>
-                            <optgroup label="Produtos Individuais">
-                              {products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}
-                            </optgroup>
-                            {products.filter(p => p.type === 'combo').length > 0 && (
-                              <optgroup label="Combos e Promoções">
-                                {products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {p.price.toFixed(2)}</option>)}
-                              </optgroup>
-                            )}
-                          </>
-                        )}
-                      </select>
-                    </div>
-                    
                     <div>
                       <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
                       <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>option]:text-gray-800 transition" value={quickSale.referredBy} onChange={e => setQuickSale({...quickSale, referredBy: e.target.value})}>
@@ -867,20 +748,54 @@ export default function CookieDashboard() {
                         {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                     </div>
-                    
-                    <div className="flex gap-3">
-                      <div className="w-1/2">
-                        <label className="block text-xs font-medium text-amber-100 mb-1">Qtd. Selecionada</label>
-                        <input type="number" min="1" required className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition text-center" value={quickSale.quantity} onChange={e => setQuickSale({...quickSale, quantity: Number(e.target.value)})} />
+
+                    <div className="bg-amber-700/30 dark:bg-amber-900/40 p-4 rounded-2xl border border-amber-500/30 dark:border-amber-600/30 mt-2">
+                      <label className="block text-xs font-medium text-amber-100 mb-1">Selecionar Item</label>
+                      <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition mb-3" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
+                        {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
+                          <>
+                            <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
+                            {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {p.price.toFixed(2)}</option>)}</optgroup>}
+                          </>
+                        )}
+                      </select>
+                      <div className="flex gap-3 mb-3">
+                        <div className="w-1/2">
+                          <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Quantidade</label>
+                          <input type="number" min="1" className="w-full p-2 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition text-center" value={quickSale.quantity} onChange={e => setQuickSale({...quickSale, quantity: Number(e.target.value)})} />
+                        </div>
+                        <div className="w-1/2">
+                          <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Total (R$)</label>
+                          <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
+                        </div>
                       </div>
-                      <div className="w-1/2">
-                        <label className="block text-xs font-medium text-amber-100 mb-1">Total (R$)</label>
-                        <input type="number" step="0.5" required className="w-full p-2.5 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
-                      </div>
+                      <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
+                        + Adicionar ao Pedido
+                      </button>
                     </div>
 
-                    <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3 rounded-xl font-bold mt-auto transition shadow-sm">
-                      Registar Venda
+                    {/* Exibição do Carrinho */}
+                    {quickSaleCart.length > 0 && (
+                      <div className="bg-white/10 p-3 rounded-xl text-sm border border-amber-400/30">
+                        <p className="font-bold text-amber-200 mb-2">Itens no Pedido:</p>
+                        {quickSaleCart.map((item, i) => (
+                          <div key={i} className="flex justify-between items-center text-amber-50 mb-1 pb-1 border-b border-amber-400/20 last:border-0">
+                            <span>{item.quantity}x {item.productName}</span>
+                            <div className="flex items-center gap-2">
+                              <span>R$ {item.revenue.toFixed(2)}</span>
+                              <button type="button" onClick={() => setQuickSaleCart(quickSaleCart.filter((_, idx) => idx !== i))} className="text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="pt-2 mt-1 font-bold text-white flex justify-between text-base">
+                           <span>Total:</span>
+                           <span>R$ {(quickSaleCart.reduce((a,b)=>a+b.revenue, 0) + (quickSale.quantity > 0 && quickSale.revenue > 0 && !quickSaleCart.find(i=>i.productId===quickSale.productId && i.quantity===quickSale.quantity) ? quickSale.revenue : 0)).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">
+                      Registrar Venda
                     </button>
                   </form>
                 </div>
@@ -895,11 +810,8 @@ export default function CookieDashboard() {
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Desempenho por semana (Últimas 6 semanas).</p>
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      <button 
-                        onClick={() => setShowSalesHistory(true)}
-                        className="flex items-center gap-2 text-sm bg-amber-50 dark:bg-gray-700 hover:bg-amber-100 dark:hover:bg-gray-600 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded-lg transition-colors font-medium border border-amber-200 dark:border-gray-600"
-                      >
-                        <History size={16} /> Ver Histórico Detalhado
+                      <button onClick={() => setShowSalesHistory(true)} className="flex items-center gap-2 text-sm bg-amber-50 dark:bg-gray-700 hover:bg-amber-100 dark:hover:bg-gray-600 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded-lg transition-colors font-medium border border-amber-200 dark:border-gray-600">
+                        <History size={16} /> Ver Histórico
                       </button>
                       <div className="flex items-center gap-4 text-xs font-medium mt-1 text-gray-600 dark:text-gray-300">
                         <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-600"></div> Receita Bruta</span>
@@ -909,7 +821,6 @@ export default function CookieDashboard() {
                   </div>
 
                   <div className="flex-1 flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-2 relative min-h-[200px]">
-                    {/* Linhas de grade horizontais */}
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -919,22 +830,11 @@ export default function CookieDashboard() {
                     {weeklyStats.map((data, index) => {
                       const revenueHeight = (data.revenue / maxWeeklyRevenue) * 100;
                       const profitHeight = data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
-                      
                       return (
                         <div key={index} className="flex flex-col items-center flex-1 group z-10 h-full justify-end">
                           <div className="w-full max-w-[48px] relative h-full flex items-end justify-center">
-                            {/* Barra de Receita (Fundo) */}
-                            <div 
-                              className="absolute bottom-0 w-full bg-amber-100 dark:bg-amber-800/50 rounded-t-md group-hover:bg-amber-200 dark:group-hover:bg-amber-700/60 transition-all duration-300" 
-                              style={{ height: `${revenueHeight}%` }}
-                            ></div>
-                            {/* Barra de Lucro (Frente) */}
-                            <div 
-                              className="absolute bottom-0 w-full bg-green-400 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-500 dark:group-hover:bg-green-400 transition-all duration-300 shadow-[0_-2px_4px_rgba(0,0,0,0.1)] dark:shadow-[0_-2px_4px_rgba(0,0,0,0.3)]" 
-                              style={{ height: `${profitHeight}%`, maxWidth: '60%' }}
-                            ></div>
-                            
-                            {/* Tooltip Hover */}
+                            <div className="absolute bottom-0 w-full bg-amber-100 dark:bg-amber-800/50 rounded-t-md group-hover:bg-amber-200 dark:group-hover:bg-amber-700/60 transition-all duration-300" style={{ height: `${revenueHeight}%` }}></div>
+                            <div className="absolute bottom-0 w-full bg-green-400 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-500 dark:group-hover:bg-green-400 transition-all duration-300 shadow-[0_-2px_4px_rgba(0,0,0,0.1)] dark:shadow-[0_-2px_4px_rgba(0,0,0,0.3)]" style={{ height: `${profitHeight}%`, maxWidth: '60%' }}></div>
                             {data.revenue > 0 && (
                               <div className="absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-800 dark:bg-white text-white dark:text-gray-900 text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
                                 <span className="font-bold">R$ {data.revenue.toFixed(2)}</span>
@@ -948,28 +848,6 @@ export default function CookieDashboard() {
                     })}
                   </div>
                 </div>
-              </div>
-              
-              {/* Top Promotores Rápido */}
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                 <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
-                   <Award className="text-amber-600 dark:text-amber-500" size={20}/> Top Clientes Promotores
-                 </h3>
-                 {topReferrers.length > 0 && topReferrers[0].referralsCount > 0 ? (
-                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                     {topReferrers.filter(c => c.referralsCount > 0).map((customer, i) => (
-                       <div key={customer.id} className="flex items-center gap-4 bg-orange-50/50 dark:bg-gray-700/50 p-4 rounded-xl border border-orange-100 dark:border-gray-600 transition-colors">
-                         <div className="w-8 h-8 rounded-full bg-amber-200 dark:bg-amber-900/50 text-amber-800 dark:text-amber-400 flex items-center justify-center font-bold text-sm">#{i+1}</div>
-                         <div>
-                           <p className="font-bold text-gray-800 dark:text-gray-200">{customer.name}</p>
-                           <p className="text-xs text-amber-700 dark:text-gray-400">{customer.referralsCount} amigos indicados</p>
-                         </div>
-                       </div>
-                     ))}
-                   </div>
-                 ) : (
-                   <p className="text-sm text-gray-500 dark:text-gray-400">Nenhum cliente indicou amigos ainda. Registe indicações nas Novas Vendas!</p>
-                 )}
               </div>
             </div>
           )}
@@ -985,13 +863,8 @@ export default function CookieDashboard() {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Form Add Product */}
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 h-fit transition-colors">
-                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
-                    <Plus size={20} className="text-amber-600 dark:text-amber-500" /> Adicionar Item
-                  </h3>
-                  
-                  {/* Dica de Preço Baseada na Ficha Técnica */}
+                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><Plus size={20} className="text-amber-600 dark:text-amber-500" /> Adicionar Item</h3>
                   {costMetrics.costPerCookie > 0 && (
                     <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700/50">
                       <p className="text-xs text-amber-800 dark:text-amber-300 font-medium flex items-center gap-1 mb-1"><Lightbulb size={14}/> Sugestão de Precificação</p>
@@ -999,7 +872,6 @@ export default function CookieDashboard() {
                       <p className="text-xs text-amber-700 dark:text-amber-400/80">Sugestão (100% lucro): <strong>R$ {(costMetrics.costPerCookie * (newProduct.type === 'combo' ? (Number(newProduct.units) || 1) : 1) * 2).toFixed(2)}</strong></p>
                     </div>
                   )}
-
                   <form onSubmit={handleAddProduct} className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de Item</label>
@@ -1008,12 +880,10 @@ export default function CookieDashboard() {
                         <option value="combo">Combo / Promoção</option>
                       </select>
                     </div>
-                    
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nome do {newProduct.type === 'combo' ? 'Combo' : 'Produto'}</label>
                       <input required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} placeholder={newProduct.type === 'combo' ? "Ex: Combo 2 Unidades" : "Ex: Cookie Red Velvet"} />
                     </div>
-
                     {newProduct.type === 'combo' && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quantos cookies vêm nesse combo?</label>
@@ -1021,21 +891,15 @@ export default function CookieDashboard() {
                         <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">Garante o custo correto da Ficha Técnica na venda.</p>
                       </div>
                     )}
-
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Preço de Venda (R$)</label>
                       <input required type="number" step="0.10" min="0" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} placeholder="Ex: 18.00" />
                     </div>
-                    <button type="submit" className="w-full bg-amber-600 dark:bg-amber-700 text-white py-2 rounded-lg hover:bg-amber-700 dark:hover:bg-amber-600 transition font-medium mt-2">
-                      Salvar {newProduct.type === 'combo' ? 'Combo' : 'Produto'}
-                    </button>
+                    <button type="submit" className="w-full bg-amber-600 dark:bg-amber-700 text-white py-2 rounded-lg hover:bg-amber-700 dark:hover:bg-amber-600 transition font-medium mt-2">Salvar {newProduct.type === 'combo' ? 'Combo' : 'Produto'}</button>
                   </form>
                 </div>
 
-                {/* Lista de Produtos Dividida */}
                 <div className="lg:col-span-2 flex flex-col gap-6">
-                  
-                  {/* Produtos Individuais */}
                   <div>
                     <h4 className="text-md font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"><Tag size={18}/> Produtos Individuais</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1044,23 +908,17 @@ export default function CookieDashboard() {
                       ) : products.filter(p => p.type === 'single' || !p.type).map(product => (
                         <div key={product.id} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex justify-between items-center group transition-colors">
                           <div className="flex items-center gap-3">
-                            <div className="bg-orange-100 dark:bg-orange-900/30 p-3 rounded-full text-orange-600 dark:text-orange-400">
-                              <Tag size={20} />
-                            </div>
+                            <div className="bg-orange-100 dark:bg-orange-900/30 p-3 rounded-full text-orange-600 dark:text-orange-400"><Tag size={20} /></div>
                             <div>
                               <p className="font-bold text-gray-800 dark:text-gray-200">{product.name}</p>
                               <p className="text-sm font-medium text-green-600 dark:text-green-400">R$ {product.price.toFixed(2)}</p>
                             </div>
                           </div>
-                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover">
-                            <Trash2 size={18} />
-                          </button>
+                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover"><Trash2 size={18} /></button>
                         </div>
                       ))}
                     </div>
                   </div>
-
-                  {/* Combos e Promoções */}
                   <div>
                     <h4 className="text-md font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"><Layers size={18} className="text-amber-600 dark:text-amber-500"/> Combos & Promoções</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1069,9 +927,7 @@ export default function CookieDashboard() {
                       ) : products.filter(p => p.type === 'combo').map(product => (
                         <div key={product.id} className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-200 dark:border-amber-700/50 flex justify-between items-center group transition-colors">
                           <div className="flex items-center gap-3">
-                            <div className="bg-amber-200 dark:bg-amber-900/50 p-3 rounded-full text-amber-700 dark:text-amber-400">
-                              <Layers size={20} />
-                            </div>
+                            <div className="bg-amber-200 dark:bg-amber-900/50 p-3 rounded-full text-amber-700 dark:text-amber-400"><Layers size={20} /></div>
                             <div>
                               <p className="font-bold text-gray-800 dark:text-gray-200">{product.name}</p>
                               <div className="flex items-center gap-2">
@@ -1080,14 +936,11 @@ export default function CookieDashboard() {
                               </div>
                             </div>
                           </div>
-                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-amber-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover">
-                            <Trash2 size={18} />
-                          </button>
+                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-amber-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover"><Trash2 size={18} /></button>
                         </div>
                       ))}
                     </div>
                   </div>
-
                 </div>
               </div>
             </div>
@@ -1102,26 +955,19 @@ export default function CookieDashboard() {
                   <p className="text-gray-600 dark:text-gray-400 mt-2">Conecte sua planilha para gerar os custos em tempo real.</p>
                 </div>
               </div>
-
-              {/* PAINEL DE SINCRONIZAÇÃO */}
               <div className="bg-amber-900 dark:bg-gray-800 p-8 rounded-3xl shadow-sm relative overflow-hidden text-white flex flex-col justify-center mb-8 border border-transparent dark:border-gray-700 transition-colors">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-amber-700 dark:bg-gray-700 rounded-full blur-3xl -mr-20 -mt-20 opacity-50"></div>
                 <div className="relative z-10 flex flex-col md:flex-row gap-8 items-center">
                   <div className="flex-1">
-                    <h3 className="text-2xl font-bold mb-2 flex items-center gap-2 text-white">
-                      <FileSpreadsheet className="text-amber-300 dark:text-amber-400" /> Vínculo com Planilha Excel/Sheets
-                    </h3>
-                    <p className="text-amber-100 dark:text-gray-300 text-sm leading-relaxed mb-4">
-                      Seus lucros do painel principal dependem da Ficha Técnica. Cole o link da sua planilha aqui e sincronize para manter os custos da matéria-prima atualizados.
-                    </p>
+                    <h3 className="text-2xl font-bold mb-2 flex items-center gap-2 text-white"><FileSpreadsheet className="text-amber-300 dark:text-amber-400" /> Vínculo com Planilha Excel/Sheets</h3>
+                    <p className="text-amber-100 dark:text-gray-300 text-sm leading-relaxed mb-4">Seus lucros do painel principal dependem da Ficha Técnica. Cole o link da sua planilha aqui e sincronize para manter os custos da matéria-prima atualizados.</p>
                     <div className="flex flex-col sm:flex-row gap-3">
                       <div className="flex-1 relative">
                         <LinkIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                         <input type="text" placeholder="Link da sua planilha..." className="w-full pl-12 pr-4 py-3 rounded-xl border-none focus:outline-none focus:ring-2 focus:ring-amber-300 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
                       </div>
                       <button onClick={handleSyncSheet} disabled={isSyncing} className="bg-amber-500 dark:bg-amber-600 hover:bg-amber-400 dark:hover:bg-amber-500 text-amber-950 dark:text-white px-6 py-3 rounded-xl font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-70 whitespace-nowrap">
-                        <RefreshCw size={18} className={isSyncing ? "animate-spin" : ""} />
-                        {isSyncing ? "Lendo..." : "Sincronizar"}
+                        <RefreshCw size={18} className={isSyncing ? "animate-spin" : ""} /> {isSyncing ? "Lendo..." : "Sincronizar"}
                       </button>
                     </div>
                     {lastSync && <p className="text-xs text-amber-200 dark:text-gray-400 mt-3 flex items-center gap-1 font-medium"><CheckCircle size={12}/> Última leitura: {lastSync}</p>}
@@ -1132,7 +978,6 @@ export default function CookieDashboard() {
               {ingredients.length > 0 && (
                 <>
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
-                    {/* Cards de Métricas Ficam em uma coluna ou grade */}
                     <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
                         <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Package size={16}/><h3 className="font-medium text-xs">Custo por Receita</h3></div>
@@ -1151,8 +996,6 @@ export default function CookieDashboard() {
                         <p className="text-xl font-bold text-purple-600 dark:text-purple-400">{costMetrics.profitMargin.toFixed(1)}%</p>
                       </div>
                     </div>
-
-                    {/* Controles Dinâmicos */}
                     <div className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl border border-amber-200 dark:border-gray-700 transition-colors">
                       <h3 className="font-bold text-amber-900 dark:text-gray-200 mb-3 text-sm">Simulador Base</h3>
                       <div className="space-y-3">
@@ -1169,16 +1012,10 @@ export default function CookieDashboard() {
                   </div>
 
                   <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 mb-8 transition-colors">
-                    <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
-                      <PieChart className="text-amber-600 dark:text-amber-500" size={20} /> Composição de Preço Base (1 Unidade)
-                    </h3>
+                    <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><PieChart className="text-amber-600 dark:text-amber-500" size={20} /> Composição de Preço Base (1 Unidade)</h3>
                     <div className="flex items-center h-10 rounded-full overflow-hidden w-full bg-gray-100 dark:bg-gray-900 mt-2 border border-gray-200 dark:border-gray-700">
-                      <div className="h-full bg-orange-400 dark:bg-orange-500 flex items-center justify-center text-white text-xs font-bold transition-all" style={{ width: `${Math.max((costMetrics.costPerCookie / recipeConfig.salePrice) * 100, 0)}%` }}>
-                        {(costMetrics.costPerCookie / recipeConfig.salePrice * 100) > 10 && 'Custo'}
-                      </div>
-                      <div className="h-full bg-green-500 dark:bg-green-600 flex items-center justify-center text-white text-xs font-bold transition-all" style={{ width: `${Math.max((costMetrics.profit / recipeConfig.salePrice) * 100, 0)}%` }}>
-                        {(costMetrics.profit / recipeConfig.salePrice * 100) > 10 && 'Lucro Líquido'}
-                      </div>
+                      <div className="h-full bg-orange-400 dark:bg-orange-500 flex items-center justify-center text-white text-xs font-bold transition-all" style={{ width: `${Math.max((costMetrics.costPerCookie / recipeConfig.salePrice) * 100, 0)}%` }}>{(costMetrics.costPerCookie / recipeConfig.salePrice * 100) > 10 && 'Custo'}</div>
+                      <div className="h-full bg-green-500 dark:bg-green-600 flex items-center justify-center text-white text-xs font-bold transition-all" style={{ width: `${Math.max((costMetrics.profit / recipeConfig.salePrice) * 100, 0)}%` }}>{(costMetrics.profit / recipeConfig.salePrice * 100) > 10 && 'Lucro Líquido'}</div>
                     </div>
                     <div className="flex justify-between text-sm mt-3 px-2">
                       <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300"><div className="w-3 h-3 rounded-full bg-orange-400 dark:bg-orange-500"></div>Custo: R$ {costMetrics.costPerCookie.toFixed(2)}</div>
@@ -1188,14 +1025,10 @@ export default function CookieDashboard() {
                 </>
               )}
 
-              {/* Tabela de Ingredientes (Ficha Técnica) */}
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 overflow-hidden transition-colors">
                 <div className="p-6 border-b border-amber-100 dark:border-gray-700 bg-amber-50/30 dark:bg-gray-900 flex justify-between items-center">
-                  <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                    <FileSpreadsheet className="text-amber-600 dark:text-amber-500" size={20} /> Insumos da Planilha Vinculada
-                  </h3>
+                  <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><FileSpreadsheet className="text-amber-600 dark:text-amber-500" size={20} /> Insumos da Planilha Vinculada</h3>
                 </div>
-                
                 {ingredients.length === 0 ? (
                   <div className="p-12 text-center flex flex-col items-center justify-center bg-white dark:bg-gray-800">
                      <FileSpreadsheet className="text-amber-200 dark:text-gray-600 mb-3" size={48} />
@@ -1207,11 +1040,7 @@ export default function CookieDashboard() {
                     <table className="w-full text-left border-collapse min-w-max">
                       <thead>
                         <tr className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 text-sm">
-                          <th className="p-4 font-semibold">Matéria Prima</th>
-                          <th className="p-4 font-semibold">Preço na Planilha</th>
-                          <th className="p-4 font-semibold">Qtde Pacote</th>
-                          <th className="p-4 font-semibold">Uso na Receita</th>
-                          <th className="p-4 font-semibold text-right text-amber-700 dark:text-amber-400">Custo na Receita</th>
+                          <th className="p-4 font-semibold">Matéria Prima</th><th className="p-4 font-semibold">Preço na Planilha</th><th className="p-4 font-semibold">Qtde Pacote</th><th className="p-4 font-semibold">Uso na Receita</th><th className="p-4 font-semibold text-right text-amber-700 dark:text-amber-400">Custo na Receita</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1219,11 +1048,7 @@ export default function CookieDashboard() {
                           const ingCost = (ing.bulkPrice / ing.bulkQty) * ing.recipeQty;
                           return (
                             <tr key={ing.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{ing.name}</td>
-                              <td className="p-4 text-gray-600 dark:text-gray-400">R$ {ing.bulkPrice.toFixed(2)}</td>
-                              <td className="p-4 text-gray-600 dark:text-gray-400">{ing.bulkQty} {ing.unit}</td>
-                              <td className="p-4 text-gray-600 dark:text-gray-400">{ing.recipeQty} {ing.unit}</td>
-                              <td className="p-4 text-right font-medium text-amber-700 dark:text-amber-400">R$ {ingCost.toFixed(2)}</td>
+                              <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{ing.name}</td><td className="p-4 text-gray-600 dark:text-gray-400">R$ {ing.bulkPrice.toFixed(2)}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.bulkQty} {ing.unit}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.recipeQty} {ing.unit}</td><td className="p-4 text-right font-medium text-amber-700 dark:text-amber-400">R$ {ingCost.toFixed(2)}</td>
                             </tr>
                           );
                         })}
@@ -1246,24 +1071,16 @@ export default function CookieDashboard() {
                 <div className="flex items-center gap-2 bg-white dark:bg-gray-800 px-4 py-2 rounded-xl border border-amber-200 dark:border-gray-700 shadow-sm w-full sm:w-auto transition-colors">
                   <ArrowUpDown size={18} className="text-amber-600 dark:text-amber-500" />
                   <select className="bg-transparent font-medium text-gray-700 dark:text-gray-200 outline-none w-full cursor-pointer" value={customerSortBy} onChange={(e) => setCustomerSortBy(e.target.value)}>
-                    <option value="name-asc">Ordem: A - Z</option>
-                    <option value="name-desc">Ordem: Z - A</option>
-                    <option value="referrals-desc">Maior nº de Indicações</option>
-                    <option value="purchases-desc">Maior nº de Pedidos</option>
+                    <option value="name-asc">Ordem: A - Z</option><option value="name-desc">Ordem: Z - A</option><option value="referrals-desc">Maior nº de Indicações</option><option value="purchases-desc">Maior nº de Pedidos</option>
                   </select>
                 </div>
               </div>
-              
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 overflow-hidden transition-colors">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-amber-50 dark:bg-gray-900 text-amber-900 dark:text-amber-400 border-b border-amber-100 dark:border-gray-700">
-                        <th className="p-4 font-semibold">Nome</th>
-                        <th className="p-4 font-semibold">Indicado por</th>
-                        <th className="p-4 font-semibold text-center">Indicações Feitas</th>
-                        <th className="p-4 font-semibold text-center">Nº de Pedidos</th>
-                        <th className="p-4 font-semibold text-center">Ações</th>
+                        <th className="p-4 font-semibold">Nome</th><th className="p-4 font-semibold">Indicado por</th><th className="p-4 font-semibold text-center">Indicações Feitas</th><th className="p-4 font-semibold text-center">Nº de Pedidos</th><th className="p-4 font-semibold text-center">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1273,15 +1090,9 @@ export default function CookieDashboard() {
                         <tr key={customer.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
                           <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{customer.name}</td>
                           <td className="p-4 text-gray-600 dark:text-gray-400 text-sm">{customer.referrerName}</td>
-                          <td className="p-4 text-center">
-                            <span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
-                              {customer.referralsCount}
-                            </span>
-                          </td>
+                          <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>{customer.referralsCount}</span></td>
                           <td className="p-4 text-center font-medium text-amber-700 dark:text-amber-400">{customer.purchases}</td>
-                          <td className="p-4 text-center">
-                            <button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button>
-                          </td>
+                          <td className="p-4 text-center"><button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1294,43 +1105,66 @@ export default function CookieDashboard() {
           {/* TAB: RESERVAS */}
           {activeTab === 'reservations' && (
             <div className="max-w-6xl mx-auto">
-              <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-8">Reservas e Interessados</h2>
+              <div className="mb-8">
+                <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Reservas e Encomendas</h2>
+                <p className="text-gray-600 dark:text-gray-400 mt-2">Crie encomendas. Ao marcá-las como "Concluídas", o sistema vai enviá-las <b>automaticamente para a sua aba de Vendas</b> e atualizar o cliente!</p>
+              </div>
               
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 h-fit transition-colors">
-                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><Plus size={20} className="text-amber-600 dark:text-amber-500" /> Nova Reserva</h3>
-                  <form onSubmit={handleAddReservation} className="space-y-4">
+                {/* Carrinho de Reservas */}
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 h-fit transition-colors flex flex-col">
+                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><Plus size={20} className="text-amber-600 dark:text-amber-500" /> Nova Encomenda</h3>
+                  <form onSubmit={handleFinalizeReservation} className="space-y-4 flex flex-col flex-1">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nome do Cliente</label>
                       <input required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.name} onChange={e => setNewReservation({...newReservation, name: e.target.value})} />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Produto Desejado</label>
-                      <select required className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none [&>optgroup]:text-gray-500 transition-colors" value={newReservation.productId} onChange={e => setNewReservation({...newReservation, productId: e.target.value})}>
-                        <option value="">Selecione no catálogo...</option>
-                        {products.filter(p => p.type === 'single' || !p.type).length > 0 && (
-                          <optgroup label="Produtos Individuais">
-                            {products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}
-                          </optgroup>
-                        )}
-                        {products.filter(p => p.type === 'combo').length > 0 && (
-                          <optgroup label="Combos e Promoções">
-                            {products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}
-                          </optgroup>
-                        )}
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quem indicou? (Opcional)</label>
+                      <select className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.referredBy} onChange={e => setNewReservation({...newReservation, referredBy: e.target.value})}>
+                        <option value="">Ninguém</option>
+                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                     </div>
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quantidade</label>
-                        <input type="number" min="1" required className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.quantity} onChange={e => setNewReservation({...newReservation, quantity: e.target.value})} />
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data (Opcional)</label>
-                        <input type="date" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.date} onChange={e => setNewReservation({...newReservation, date: e.target.value})} />
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data de Entrega (Opcional)</label>
+                      <input type="date" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.date} onChange={e => setNewReservation({...newReservation, date: e.target.value})} />
+                    </div>
+
+                    <div className="bg-amber-50 dark:bg-gray-900 p-4 rounded-xl border border-amber-200 dark:border-gray-700 mt-2">
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Adicionar Item</label>
+                      <select className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-amber-500 transition-colors mb-2 text-sm" value={newReservation.productId} onChange={e => setNewReservation({...newReservation, productId: e.target.value})}>
+                        {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
+                          <>
+                            <optgroup label="Produtos">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
+                            {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un)</option>)}</optgroup>}
+                          </>
+                        )}
+                      </select>
+                      <div className="flex items-end gap-2 mb-2">
+                         <div className="flex-1">
+                           <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Quantidade</label>
+                           <input type="number" min="1" className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded-lg outline-none text-center" value={newReservation.quantity} onChange={e => setNewReservation({...newReservation, quantity: e.target.value})} />
+                         </div>
+                         <button type="button" onClick={handleAddToCartReservation} className="bg-amber-500 text-amber-950 px-4 py-2 rounded-lg font-bold text-sm hover:bg-amber-400 transition-colors">+ Adicionar</button>
                       </div>
                     </div>
-                    <button type="submit" className="w-full bg-amber-600 dark:bg-amber-700 text-white py-2 rounded-lg hover:bg-amber-700 dark:hover:bg-amber-600 transition font-medium mt-2">Adicionar Reserva</button>
+
+                    {reservationCart.length > 0 && (
+                      <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-xl text-sm border border-gray-200 dark:border-gray-700">
+                        <p className="font-bold text-gray-700 dark:text-gray-300 mb-2">Itens na Encomenda:</p>
+                        {reservationCart.map((item, i) => (
+                          <div key={i} className="flex justify-between items-center text-gray-600 dark:text-gray-400 mb-1 pb-1 border-b border-gray-200 dark:border-gray-700 last:border-0">
+                            <span>{item.quantity}x {item.productName}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">R$ {item.expectedRevenue.toFixed(2)}</span>
+                              <button type="button" onClick={() => setReservationCart(reservationCart.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500"><Trash2 size={14}/></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button type="submit" className="w-full bg-amber-600 dark:bg-amber-700 text-white py-3 rounded-xl hover:bg-amber-700 dark:hover:bg-amber-600 transition font-bold mt-auto shadow-sm">Guardar Encomenda Completa</button>
                   </form>
                 </div>
 
@@ -1356,13 +1190,13 @@ export default function CookieDashboard() {
                             <td className="p-4 text-gray-600 dark:text-gray-400 text-sm">{reservation.date ? new Date(reservation.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : 'A combinar'}</td>
                             <td className="p-4 text-center">
                               {reservation.status === 'pending' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400"><Clock size={12}/> Pendente</span>}
-                              {reservation.status === 'completed' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"><CheckCircle size={12}/> Concluído</span>}
+                              {reservation.status === 'completed' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"><CheckCircle size={12}/> Concluída</span>}
                               {reservation.status === 'cancelled' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Cancelado</span>}
                             </td>
                             <td className="p-4 text-center flex items-center justify-center gap-2">
                               {reservation.status === 'pending' && (
                                 <>
-                                  <button onClick={() => handleUpdateReservationStatus(reservation.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Marcar como Concluído"><CheckCircle size={18}/></button>
+                                  <button onClick={() => handleUpdateReservationStatus(reservation.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Marcar como Concluída (Envia para Vendas)"><CheckCircle size={18}/></button>
                                   <button onClick={() => handleUpdateReservationStatus(reservation.id, 'cancelled')} className="text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Cancelar"><XCircle size={18}/></button>
                                 </>
                               )}
@@ -1472,12 +1306,7 @@ export default function CookieDashboard() {
                     </h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registo completo de todas as vendas efetuadas.</p>
                   </div>
-                  <button 
-                    onClick={() => setShowSalesHistory(false)} 
-                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 rounded-xl transition-colors"
-                  >
-                    <X size={24} />
-                  </button>
+                  <button onClick={() => setShowSalesHistory(false)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 rounded-xl transition-colors"><X size={24} /></button>
                 </div>
                 
                 <div className="p-6 overflow-y-auto flex-1 bg-gray-50/30 dark:bg-gray-900/30 transition-colors">
@@ -1485,11 +1314,7 @@ export default function CookieDashboard() {
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-amber-50 dark:bg-gray-900 text-amber-900 dark:text-amber-400 border-b border-amber-100 dark:border-gray-700">
-                          <th className="p-4 font-semibold">Data / Hora</th>
-                          <th className="p-4 font-semibold">Cliente</th>
-                          <th className="p-4 font-semibold text-center">Quantidade</th>
-                          <th className="p-4 font-semibold text-right">Receita (R$)</th>
-                          <th className="p-4 font-semibold text-right">Lucro Est. (R$)</th>
+                          <th className="p-4 font-semibold">Data / Hora</th><th className="p-4 font-semibold">Cliente</th><th className="p-4 font-semibold text-center">Quantidade</th><th className="p-4 font-semibold text-right">Receita (R$)</th><th className="p-4 font-semibold text-right">Lucro Est. (R$)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1499,18 +1324,9 @@ export default function CookieDashboard() {
                           const estProfit = sale.revenue - ((sale.cookieUnits || sale.quantity) * costMetrics.costPerCookie);
                           return (
                             <tr key={sale.id} className="border-b border-gray-50 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-4 text-sm text-gray-600 dark:text-gray-300">
-                                {new Date(sale.date).toLocaleDateString('pt-BR')} <br/>
-                                <span className="text-xs text-gray-400 dark:text-gray-500">{new Date(sale.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</span>
-                              </td>
-                              <td className="p-4">
-                                <p className="font-medium text-gray-800 dark:text-gray-200">{sale.customerName || 'Cliente Balcão'}</p>
-                                <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">{sale.productName || 'Produto Avulso'}</p>
-                              </td>
-                              <td className="p-4 text-center">
-                                <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-400 px-2 py-1 rounded-lg text-xs font-bold">{sale.quantity} un.</span>
-                                {sale.cookieUnits > sale.quantity && <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">({sale.cookieUnits} cookies)</p>}
-                              </td>
+                              <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{new Date(sale.date).toLocaleDateString('pt-BR')} <br/><span className="text-xs text-gray-400 dark:text-gray-500">{new Date(sale.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</span></td>
+                              <td className="p-4"><p className="font-medium text-gray-800 dark:text-gray-200">{sale.customerName || 'Cliente Balcão'}</p><p className="text-xs text-amber-600 dark:text-amber-400 font-medium">{sale.productName || 'Produto Avulso'}</p></td>
+                              <td className="p-4 text-center"><span className="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-400 px-2 py-1 rounded-lg text-xs font-bold">{sale.quantity} un.</span>{sale.cookieUnits > sale.quantity && <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">({sale.cookieUnits} cookies)</p>}</td>
                               <td className="p-4 text-right font-medium text-gray-800 dark:text-gray-200">R$ {sale.revenue.toFixed(2)}</td>
                               <td className="p-4 text-right font-bold text-green-600 dark:text-green-400">R$ {estProfit.toFixed(2)}</td>
                             </tr>
