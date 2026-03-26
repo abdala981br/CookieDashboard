@@ -277,8 +277,7 @@ export default function CookieDashboard() {
   // --- CÁLCULOS DE ESTOQUE E PRODUÇÃO ---
   const inventoryCheck = useMemo(() => {
     const list = ingredients.map(ing => {
-      const isPowder = ing.unit.toLowerCase() === 'g' || ing.unit.toLowerCase() === 'kg' || ing.unit.toLowerCase() === 'ml' || ing.unit.toLowerCase() === 'l';
-      const wasteFactor = isPowder ? 1.02 : 1; 
+      const wasteFactor = ing.applyWaste ? 1.02 : 1; 
       const totalNeeded = (ing.recipeQty * wasteFactor) * productionBatches;
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
@@ -288,12 +287,14 @@ export default function CookieDashboard() {
       let exactMissingToBuy = 0;
 
       if (missingAmount > 0 && ing.bulkQty > 0) {
-          packagesToBuy = Math.ceil(missingAmount / ing.bulkQty);
+          // Arredonda para 3 casas decimais para evitar bugs do JS forçando pacotes extras
+          const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
+          packagesToBuy = Math.ceil(safeMissingAmount / ing.bulkQty);
           costToBuy = packagesToBuy * ing.bulkPrice;
           exactMissingToBuy = packagesToBuy * ing.bulkQty;
       }
 
-      return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, isPowder, wasteFactor };
+      return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, wasteFactor };
     });
     const totalMissingCost = list.reduce((sum, item) => sum + item.costToBuy, 0);
     const canProduce = list.every(item => item.missingAmount === 0);
@@ -303,14 +304,14 @@ export default function CookieDashboard() {
   // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje (Comprando pacotes inteiros)
   const missingCostForOneBatch = useMemo(() => {
     return ingredients.reduce((sum, ing) => {
-      const isPowder = ing.unit.toLowerCase() === 'g' || ing.unit.toLowerCase() === 'kg' || ing.unit.toLowerCase() === 'ml' || ing.unit.toLowerCase() === 'l';
-      const wasteFactor = isPowder ? 1.02 : 1; 
+      const wasteFactor = ing.applyWaste ? 1.02 : 1; 
       const totalNeeded = (ing.recipeQty * wasteFactor) * 1; 
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
       let costToBuy = 0;
       if (missingAmount > 0 && ing.bulkQty > 0) {
-          costToBuy = Math.ceil(missingAmount / ing.bulkQty) * ing.bulkPrice;
+          const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
+          costToBuy = Math.ceil(safeMissingAmount / ing.bulkQty) * ing.bulkPrice;
       }
       return sum + costToBuy;
     }, 0);
@@ -320,6 +321,11 @@ export default function CookieDashboard() {
     const newStock = parseFloat(val) || 0;
     const item = ingredients.find(i => i.id === id);
     if(item && user) saveToDb('ingredients', id, { ...item, currentStock: newStock });
+  };
+
+  const handleToggleWaste = (id, currentVal) => {
+    const item = ingredients.find(i => i.id === id);
+    if(item && user) saveToDb('ingredients', id, { ...item, applyWaste: !currentVal });
   };
 
   const handleProduce = () => {
@@ -565,8 +571,13 @@ export default function CookieDashboard() {
           
           const existingItem = ingredients.find(old => old.name.toLowerCase() === name.toLowerCase());
           const currentStock = existingItem ? (existingItem.currentStock || 0) : 0;
+          
+          // LÓGICA DE QUEBRA (Desperdício) - Preenche como true por defeito para pós, a menos que o utilizador já tenha alterado.
+          const unitLower = (clean(row[unitIdx]) || 'un').toLowerCase();
+          const defaultWaste = (unitLower === 'g' || unitLower === 'kg' || unitLower === 'ml' || unitLower === 'l');
+          const applyWaste = existingItem && existingItem.applyWaste !== undefined ? existingItem.applyWaste : defaultWaste;
 
-          parsedIngredients.push({ id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]), unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty, currentStock });
+          parsedIngredients.push({ id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]), unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty, currentStock, applyWaste });
         }
       }
 
@@ -1168,8 +1179,16 @@ export default function CookieDashboard() {
                           return (
                             <tr key={ing.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
                               <td className="p-4">
-                                <p className="font-bold text-gray-800 dark:text-gray-200">{ing.name}</p>
-                                {ing.isPowder && <p className="text-[10px] text-amber-600 dark:text-amber-400">+2% margem de quebra aplicada</p>}
+                                <div className="flex flex-col gap-1 items-start">
+                                  <p className="font-bold text-gray-800 dark:text-gray-200">{ing.name}</p>
+                                  <button 
+                                    onClick={() => handleToggleWaste(ing.id, ing.applyWaste)}
+                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-colors border ${ing.applyWaste ? 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/40 dark:text-amber-400 dark:border-amber-700/50' : 'bg-gray-100 text-gray-400 border-gray-200 dark:bg-gray-800 dark:text-gray-500 dark:border-gray-700'}`}
+                                    title="Clique para ligar/desligar os 2% adicionais de desperdício na hora da compra"
+                                  >
+                                    {ing.applyWaste ? '+2% Quebra ON' : '+2% Quebra OFF'}
+                                  </button>
+                                </div>
                               </td>
                               <td className="p-4 text-center font-medium text-gray-600 dark:text-gray-300">
                                 {ing.totalNeeded.toFixed(1)} {ing.unit}
@@ -1631,51 +1650,6 @@ export default function CookieDashboard() {
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* MODAL DE HISTÓRICO DE VENDAS */}
-          {showSalesHistory && (
-            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-8">
-              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-900/50 transition-colors">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                      <History className="text-amber-600 dark:text-amber-500" /> Histórico Detalhado
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registo completo de todas as vendas efetuadas.</p>
-                  </div>
-                  <button onClick={() => setShowSalesHistory(false)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 rounded-xl transition-colors"><X size={24} /></button>
-                </div>
-                
-                <div className="p-6 overflow-y-auto flex-1 bg-gray-50/30 dark:bg-gray-900/30 transition-colors">
-                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-amber-50 dark:bg-gray-900 text-amber-900 dark:text-amber-400 border-b border-amber-100 dark:border-gray-700">
-                          <th className="p-4 font-semibold">Data / Hora</th><th className="p-4 font-semibold">Cliente</th><th className="p-4 font-semibold text-center">Quantidade</th><th className="p-4 font-semibold text-right">Receita (R$)</th><th className="p-4 font-semibold text-right">Lucro Est. (R$)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sales.length === 0 ? (
-                          <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhuma venda registada ainda.</td></tr>
-                        ) : [...sales].sort((a,b) => new Date(b.date) - new Date(a.date)).map(sale => {
-                          const estProfit = sale.revenue - ((sale.cookieUnits || sale.quantity) * costMetrics.costPerCookie);
-                          return (
-                            <tr key={sale.id} className="border-b border-gray-50 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{new Date(sale.date).toLocaleDateString('pt-BR')} <br/><span className="text-xs text-gray-400 dark:text-gray-500">{new Date(sale.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</span></td>
-                              <td className="p-4"><p className="font-medium text-gray-800 dark:text-gray-200">{sale.customerName || 'Cliente Balcão'}</p><p className="text-xs text-amber-600 dark:text-amber-400 font-medium">{sale.productName || 'Produto Avulso'}</p></td>
-                              <td className="p-4 text-center"><span className="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-400 px-2 py-1 rounded-lg text-xs font-bold">{sale.quantity} un.</span>{sale.cookieUnits > sale.quantity && <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">({sale.cookieUnits} cookies)</p>}</td>
-                              <td className="p-4 text-right font-medium text-gray-800 dark:text-gray-200">R$ {sale.revenue.toFixed(2)}</td>
-                              <td className="p-4 text-right font-bold text-green-600 dark:text-green-400">R$ {estProfit.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               </div>
             </div>
           )}
