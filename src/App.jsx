@@ -300,7 +300,7 @@ export default function CookieDashboard() {
     return { list, totalMissingCost, canProduce };
   }, [ingredients, productionBatches]);
 
-  // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje
+  // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje (Comprando pacotes inteiros)
   const missingCostForOneBatch = useMemo(() => {
     return ingredients.reduce((sum, ing) => {
       const isPowder = ing.unit.toLowerCase() === 'g' || ing.unit.toLowerCase() === 'kg' || ing.unit.toLowerCase() === 'ml' || ing.unit.toLowerCase() === 'l';
@@ -1038,6 +1038,7 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
+                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1049,22 +1050,22 @@ export default function CookieDashboard() {
                       const revenueHeight = maxWeeklyRevenue > 0 ? (data.revenue / maxWeeklyRevenue) * 100 : 0;
                       const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
                       return (
-                        <div key={index} className="flex flex-col items-center flex-1 group z-10 h-full justify-end">
-                          {/* GRÁFICO DE BARRAS DUPLAS */}
-                          <div className="w-full relative h-full flex items-end justify-center gap-1 sm:gap-2">
+                        <div key={index} className="flex flex-col items-center flex-1 group z-10 h-[200px] justify-end">
+                          {/* GRÁFICO DE BARRAS DUPLAS LADO A LADO */}
+                          <div className="w-full relative h-[180px] flex items-end justify-center gap-1 sm:gap-2">
                             
-                            <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%` }}></div>
+                            <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%`, minHeight: data.revenue > 0 ? '4px' : '0' }}></div>
                             
-                            <div className="w-3 sm:w-5 bg-green-500 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-400 transition-all duration-300 shadow-[0_-1px_3px_rgba(0,0,0,0.1)] dark:shadow-none" style={{ height: `${profitHeight}%` }}></div>
+                            <div className="w-3 sm:w-5 bg-green-500 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-400 transition-all duration-300 shadow-[0_-1px_3px_rgba(0,0,0,0.1)] dark:shadow-none" style={{ height: `${profitHeight}%`, minHeight: data.estimatedProfit > 0 ? '4px' : '0' }}></div>
                             
                             {data.revenue > 0 && (
-                              <div className="absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-800 dark:bg-white text-white dark:text-gray-900 text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
+                              <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-gray-800 dark:bg-white text-white dark:text-gray-900 text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
                                 <span className="font-bold">Rec: R$ {data.revenue.toFixed(2)}</span>
                                 <span className="text-green-300 dark:text-green-600 text-[10px]">Lucro: R$ {data.estimatedProfit.toFixed(2)}</span>
                               </div>
                             )}
                           </div>
-                          <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-2 font-medium text-center leading-tight max-w-[70px] whitespace-pre-line">{data.label}</span>
+                          <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-2 font-medium text-center leading-tight max-w-[70px] whitespace-pre-line h-[20px]">{data.label}</span>
                         </div>
                       );
                     })}
@@ -1691,15 +1692,15 @@ export default function CookieDashboard() {
                     <span className="text-green-400 font-bold">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-400">Custo Matéria Prima <span className="text-[10px] block">{globalMetrics.totalCookiesSold} un. x R$ {costMetrics.costPerCookie.toFixed(2)}</span></span>
+                    <span className="text-gray-400">Custo Histórico <span className="text-[10px] block">Ficha Técnica ({globalMetrics.totalCookiesSold} un.)</span></span>
                     <span className="text-red-400 font-bold">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between mt-2 pt-2 border-t border-gray-700 mb-3">
-                    <span className="font-bold text-white">Lucro Real Final</span>
+                    <span className="font-bold text-white">Lucro Real (Histórico)</span>
                     <span className="text-amber-400 font-black text-lg">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</span>
                  </div>
                  <div className="bg-gray-900 rounded-xl p-3 border border-gray-700">
-                    <span className="text-gray-400 text-xs block mb-1">Custo para bater +1 receita hoje:</span>
+                    <span className="text-gray-400 text-xs block mb-1">Custo para bater +1 receita hoje (Mercado):</span>
                     <span className="text-red-400 font-bold block text-right">R$ {missingCostForOneBatch.toFixed(2)}</span>
                  </div>
                </div>
@@ -1717,7 +1718,7 @@ export default function CookieDashboard() {
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
-                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lista Compras (+1)</span>
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Prod (+1)</span>
                  <span className="font-black text-red-400">-R$ {missingCostForOneBatch.toFixed(2)}</span>
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
