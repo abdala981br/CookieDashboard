@@ -11,7 +11,8 @@ import {
   CheckCircle, Clock, XCircle, Calculator, DollarSign, TrendingUp,
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
-  AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, TrendingDown
+  AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, Percent
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -64,6 +65,7 @@ export default function CookieDashboard() {
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
   
   const [recipeConfig, setRecipeConfig] = useState({ yield: 12, salePrice: 10.00 });
+  const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); // Novas Metas!
   const [sheetUrl, setSheetUrl] = useState('');
   const [lastSync, setLastSync] = useState(null);
 
@@ -139,6 +141,7 @@ export default function CookieDashboard() {
          if (snap.exists()) {
              const data = snap.data();
              if(data.recipeConfig) setRecipeConfig(data.recipeConfig);
+             if(data.goals) setGoals(data.goals);
              if(data.lastSync) setLastSync(data.lastSync);
              if(data.sheetUrl) setSheetUrl(data.sheetUrl);
          }
@@ -151,10 +154,9 @@ export default function CookieDashboard() {
   const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
-  useEffect(() => { if (db && user) saveConfig({ recipeConfig }); }, [recipeConfig, user]);
+  useEffect(() => { if (db && user) saveConfig({ recipeConfig, goals }); }, [recipeConfig, goals, user]);
   useEffect(() => { if (db && user) saveConfig({ sheetUrl }); }, [sheetUrl, user]);
 
-  // Garante que o produto selecionado auto-preenche o preço no carrinho
   useEffect(() => {
     if (!quickSale.productId && products.length > 0) {
       setQuickSale(prev => ({ ...prev, productId: products[0].id, revenue: products[0].price }));
@@ -165,9 +167,7 @@ export default function CookieDashboard() {
   }, [quickSale.quantity, quickSale.productId, products, recipeConfig.salePrice]);
 
   useEffect(() => {
-    if (!newReservation.productId && products.length > 0) {
-      setNewReservation(prev => ({ ...prev, productId: products[0].id }));
-    }
+    if (!newReservation.productId && products.length > 0) setNewReservation(prev => ({ ...prev, productId: products[0].id }));
   }, [products]);
 
   // --- CÁLCULOS DA FICHA TÉCNICA E CUSTOS ---
@@ -175,11 +175,121 @@ export default function CookieDashboard() {
     const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((ing.bulkPrice / ing.bulkQty) * ing.recipeQty), 0);
     const costPerCookie = totalRecipeCost / (recipeConfig.yield || 1);
     const profit = recipeConfig.salePrice - costPerCookie;
-    const profitMargin = recipeConfig.salePrice > 0 ? (profit / recipeConfig.salePrice) * 100 : 0;
-    return { totalRecipeCost, costPerCookie, profit, profitMargin };
+    return { totalRecipeCost, costPerCookie, profit };
   }, [ingredients, recipeConfig]);
 
-  // --- CÁLCULOS DE DASHBOARD E VENDAS ---
+  // --- 🧠 MÓDULO INTELIGÊNCIA DE NEGÓCIO (BI) ---
+  
+  // 1. Métricas Globais (Visão Rápida)
+  const globalMetrics = useMemo(() => {
+    const totalRevenue = sales.reduce((acc, curr) => acc + curr.revenue, 0);
+    const totalCookiesSold = sales.reduce((acc, curr) => acc + (curr.cookieUnits || curr.quantity), 0);
+    const totalEstimatedProfit = totalRevenue - (totalCookiesSold * costMetrics.costPerCookie);
+    const ticketMedio = sales.length > 0 ? (totalRevenue / sales.length) : 0;
+    const margin = totalRevenue > 0 ? (totalEstimatedProfit / totalRevenue) * 100 : 0;
+    return { totalRevenue, totalCookiesSold, totalEstimatedProfit, ticketMedio, margin };
+  }, [sales, costMetrics]);
+
+  // 2. Desempenho no Tempo (Hoje vs Ontem, Semana vs Semana Passada)
+  const timeStats = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    const last7Days = new Date(today); last7Days.setDate(last7Days.getDate() - 6);
+    const previous7Days = new Date(last7Days); previous7Days.setDate(previous7Days.getDate() - 7);
+    
+    let revToday = 0, revYesterday = 0, rev7Days = 0, revPrev7Days = 0;
+
+    sales.forEach(s => {
+      const d = new Date(s.date);
+      if (d >= today) revToday += s.revenue;
+      else if (d >= yesterday && d < today) revYesterday += s.revenue;
+      
+      if (d >= last7Days) rev7Days += s.revenue;
+      else if (d >= previous7Days && d < last7Days) revPrev7Days += s.revenue;
+    });
+
+    const todayGrowth = revYesterday === 0 ? (revToday > 0 ? 100 : 0) : ((revToday - revYesterday) / revYesterday) * 100;
+    const weekGrowth = revPrev7Days === 0 ? (rev7Days > 0 ? 100 : 0) : ((rev7Days - revPrev7Days) / revPrev7Days) * 100;
+
+    return { revToday, revYesterday, todayGrowth, rev7Days, revPrev7Days, weekGrowth };
+  }, [sales]);
+
+  // 3. Inteligência de Produto & Cliente
+  const productIntel = useMemo(() => {
+    if (products.length === 0 || sales.length === 0) return null;
+    const pStats = products.map(p => {
+      const s = sales.filter(sale => sale.productId === p.id || sale.productName === p.name);
+      const qty = s.reduce((a,b)=>a+(b.cookieUnits||b.quantity),0);
+      const rev = s.reduce((a,b)=>a+b.revenue,0);
+      const profit = rev - (qty * costMetrics.costPerCookie);
+      return { name: p.name, qty, profit };
+    });
+    const topSold = [...pStats].sort((a,b)=>b.qty - a.qty)[0];
+    const topProfit = [...pStats].sort((a,b)=>b.profit - a.profit)[0];
+    return { topSold, topProfit };
+  }, [sales, products, costMetrics]);
+
+  const customerIntel = useMemo(() => {
+    const novos = customers.filter(c => c.purchases === 1).length;
+    const recorrentes = customers.filter(c => c.purchases > 1).length;
+    const total = novos + recorrentes;
+    const recorrentesPercent = total > 0 ? (recorrentes / total) * 100 : 0;
+    return { novos, recorrentes, recorrentesPercent };
+  }, [customers]);
+
+  // 4. Projeção Mensal
+  const projection = useMemo(() => {
+    const currentMonth = new Date().getMonth();
+    const revThisMonth = sales.filter(s => new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
+    const daysPassed = Math.max(1, new Date().getDate());
+    const daysInMonth = new Date(new Date().getFullYear(), currentMonth + 1, 0).getDate();
+    return (revThisMonth / daysPassed) * daysInMonth;
+  }, [sales]);
+
+  // --- CÁLCULOS DE PREVISÃO E RESERVAS ---
+  const pendingReservationsList = useMemo(() => {
+    return reservations.filter(r => r.status === 'pending').sort((a, b) => {
+      if (!a.date) return 1; if (!b.date) return -1;
+      return new Date(a.date) - new Date(b.date);
+    });
+  }, [reservations]);
+
+  const expectedMetrics = useMemo(() => {
+    let revenue = 0; let cookies = 0;
+    pendingReservationsList.forEach(r => { revenue += r.expectedRevenue || 0; cookies += r.cookieUnits || r.quantity || 0; });
+    const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
+    return { revenue, cookies, batchesNeeded };
+  }, [pendingReservationsList, recipeConfig.yield]);
+
+  // --- CÁLCULOS DE CLIENTES ---
+  const customersWithStats = useMemo(() => {
+    return customers.map(customer => {
+      const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
+      const referrer = customers.find(c => c.id === customer.referredBy);
+      return { ...customer, referralsCount, referrerName: referrer ? referrer.name : 'Ninguém (Direto)' };
+    });
+  }, [customers]);
+
+  // SISTEMA DE RECOMPENSAS: Alerta quando chega a 2 indicações ou múltiplos de 5
+  const pendingRewards = useMemo(() => {
+    return customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0));
+  }, [customersWithStats]);
+
+  const sortedCustomersWithStats = useMemo(() => {
+    let sorted = [...customersWithStats];
+    switch(customerSortBy) {
+      case 'name-asc': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
+      case 'name-desc': sorted.sort((a, b) => b.name.localeCompare(a.name)); break;
+      case 'referrals-desc': sorted.sort((a, b) => b.referralsCount - a.referralsCount); break;
+      case 'purchases-desc': sorted.sort((a, b) => b.purchases - a.purchases); break;
+      default: break;
+    }
+    return sorted;
+  }, [customersWithStats, customerSortBy]);
+
+  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
+
   const weeklyStats = useMemo(() => {
     const stats = [];
     const today = new Date();
@@ -211,100 +321,11 @@ export default function CookieDashboard() {
     return stats;
   }, [sales, costMetrics]);
 
-  const globalMetrics = useMemo(() => {
-    const totalRevenue = sales.reduce((acc, curr) => acc + curr.revenue, 0);
-    const totalCookiesSold = sales.reduce((acc, curr) => acc + (curr.cookieUnits || curr.quantity), 0);
-    const totalEstimatedProfit = totalRevenue - (totalCookiesSold * costMetrics.costPerCookie);
-    return { totalRevenue, totalCookiesSold, totalEstimatedProfit };
-  }, [sales, costMetrics]);
-
-  // --- 🧠 INTELIGÊNCIA DE NEGÓCIO (INSIGHTS) ---
-  const insights = useMemo(() => {
-    const list = [];
-    // 1. Crescimento Semanal
-    if (weeklyStats.length >= 2) {
-      const currentWeek = weeklyStats[5]; 
-      const lastWeek = weeklyStats[4];
-      if (lastWeek && currentWeek && lastWeek.revenue > 0) {
-          const growth = ((currentWeek.revenue - lastWeek.revenue) / lastWeek.revenue) * 100;
-          if (growth > 0) list.push({ icon: <TrendingUp size={20}/>, text: `As vendas desta semana subiram ${growth.toFixed(1)}% em relação à semana passada! 🚀`, color: 'text-green-500 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-500/20' });
-          else if (growth < 0) list.push({ icon: <TrendingDown size={20}/>, text: `As vendas caíram ${Math.abs(growth).toFixed(1)}% esta semana. Que tal uma promoção ou aviso no WhatsApp? 📢`, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-100 dark:bg-orange-400/20' });
-      }
-    }
-
-    // 2. Produtos Estrela e Lucro
-    if (products.length > 0 && sales.length > 0) {
-        const pStats = products.map(p => {
-            const s = sales.filter(sale => sale.productName === p.name);
-            return { 
-                name: p.name, 
-                qty: s.reduce((a,b)=>a+(b.cookieUnits||b.quantity),0), 
-                profit: s.reduce((a,b)=>a+(b.revenue - ((b.cookieUnits||b.quantity)*costMetrics.costPerCookie)),0) 
-            };
-        });
-        const topQty = [...pStats].sort((a,b)=>b.qty - a.qty)[0];
-        const topProfit = [...pStats].sort((a,b)=>b.profit - a.profit)[0];
-        
-        if (topQty && topQty.qty > 0) list.push({ icon: <Trophy size={20}/>, text: `O seu campeão de vendas absoluto é o "${topQty.name}" com ${topQty.qty} unidades vendidas. 👑`, color: 'text-yellow-600 dark:text-yellow-400', bg: 'bg-yellow-100 dark:bg-yellow-400/20' });
-        if (topProfit && topProfit.profit > 0 && topProfit.name !== topQty?.name) list.push({ icon: <DollarSign size={20}/>, text: `Galinha dos Ovos de Ouro: O "${topProfit.name}" é o produto que te deixa mais dinheiro no bolso no final do dia. 💰`, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-400/20' });
-    }
-
-    // 3. Projeção Mensal
-    const currentMonth = new Date().getMonth();
-    const revThisMonth = sales.filter(s => new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
-    const daysPassed = new Date().getDate();
-    const daysInMonth = new Date(new Date().getFullYear(), currentMonth + 1, 0).getDate();
-    const projection = (revThisMonth / daysPassed) * daysInMonth;
-    if (projection > 0) {
-        list.push({ icon: <Target size={20}/>, text: `Projeção Mensal: Se mantiver este ritmo de vendas diárias, vai fechar o mês com R$ ${projection.toFixed(2)}! 🎯`, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-400/20' });
-    }
-
-    return list;
-  }, [weeklyStats, sales, products, costMetrics]);
-
-  // --- CÁLCULOS DE PREVISÃO E RESERVAS ---
-  const pendingReservationsList = useMemo(() => {
-    return reservations.filter(r => r.status === 'pending').sort((a, b) => {
-      if (!a.date) return 1; if (!b.date) return -1;
-      return new Date(a.date) - new Date(b.date);
-    });
-  }, [reservations]);
-
-  const expectedMetrics = useMemo(() => {
-    let revenue = 0; let cookies = 0;
-    pendingReservationsList.forEach(r => { revenue += r.expectedRevenue || 0; cookies += r.cookieUnits || r.quantity || 0; });
-    const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
-    return { revenue, cookies, batchesNeeded };
-  }, [pendingReservationsList, recipeConfig.yield]);
-
-  // --- CÁLCULOS DE CLIENTES ---
-  const customersWithStats = useMemo(() => {
-    return customers.map(customer => {
-      const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
-      const referrer = customers.find(c => c.id === customer.referredBy);
-      return { ...customer, referralsCount, referrerName: referrer ? referrer.name : 'Ninguém (Direto)' };
-    });
-  }, [customers]);
-
-  const sortedCustomersWithStats = useMemo(() => {
-    let sorted = [...customersWithStats];
-    switch(customerSortBy) {
-      case 'name-asc': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
-      case 'name-desc': sorted.sort((a, b) => b.name.localeCompare(a.name)); break;
-      case 'referrals-desc': sorted.sort((a, b) => b.referralsCount - a.referralsCount); break;
-      case 'purchases-desc': sorted.sort((a, b) => b.purchases - a.purchases); break;
-      default: break;
-    }
-    return sorted;
-  }, [customersWithStats, customerSortBy]);
-
-  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 3), [customersWithStats]);
 
   // ==========================================
   // HANDLERS (AÇÕES)
   // ==========================================
   
-  // Lógica do Carrinho de Venda Rápida
   const handleAddToCartQuickSale = () => {
     const p = products.find(prod => prod.id === quickSale.productId);
     if (!p) return;
@@ -322,33 +343,26 @@ export default function CookieDashboard() {
     if (!quickSale.customerName || !user) return;
 
     let finalCart = [...quickSaleCart];
-    // Se o utilizador preencheu as quantidades mas não clicou em "Adicionar", adicionamos automaticamente
     if (quickSale.quantity > 0 && quickSale.revenue > 0) {
       const p = products.find(prod => prod.id === quickSale.productId);
       if (p) finalCart.push({
         productId: p.id, productName: p.name,
-        quantity: Number(quickSale.quantity),
-        cookieUnits: (p.units || 1) * Number(quickSale.quantity),
-        revenue: Number(quickSale.revenue)
+        quantity: Number(quickSale.quantity), cookieUnits: (p.units || 1) * Number(quickSale.quantity), revenue: Number(quickSale.revenue)
       });
     }
-
     if (finalCart.length === 0) return;
 
-    // Regista cada item do carrinho como uma venda isolada para o mesmo cliente
     finalCart.forEach(item => {
       const newSaleId = Math.random().toString(36).substr(2, 9);
       saveToDb('sales', newSaleId, {
-        id: newSaleId, date: new Date().toISOString(),
-        quantity: item.quantity, cookieUnits: item.cookieUnits, 
+        id: newSaleId, date: new Date().toISOString(), quantity: item.quantity, cookieUnits: item.cookieUnits, 
         revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName
       });
     });
 
     const existingCustomer = customers.find(c => c.name.toLowerCase() === quickSale.customerName.toLowerCase().trim());
-    if (existingCustomer) {
-      saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
-    } else {
+    if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
+    else {
       const newCustId = Math.random().toString(36).substr(2, 9);
       saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: quickSale.referredBy || null, purchases: 1 });
     }
@@ -357,15 +371,12 @@ export default function CookieDashboard() {
     setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice });
   };
 
-  // Lógica do Carrinho de Reservas
   const handleAddToCartReservation = () => {
     const p = products.find(prod => prod.id === newReservation.productId);
     if (!p) return;
     setReservationCart([...reservationCart, {
-      productId: p.id, productName: p.name,
-      quantity: Number(newReservation.quantity),
-      cookieUnits: (p.units || 1) * Number(newReservation.quantity),
-      expectedRevenue: p.price * Number(newReservation.quantity)
+      productId: p.id, productName: p.name, quantity: Number(newReservation.quantity),
+      cookieUnits: (p.units || 1) * Number(newReservation.quantity), expectedRevenue: p.price * Number(newReservation.quantity)
     }]);
     setNewReservation(prev => ({ ...prev, quantity: 1 }));
   };
@@ -378,13 +389,10 @@ export default function CookieDashboard() {
     if (newReservation.quantity > 0) {
       const p = products.find(prod => prod.id === newReservation.productId);
       if (p) finalCart.push({
-        productId: p.id, productName: p.name,
-        quantity: Number(newReservation.quantity),
-        cookieUnits: (p.units || 1) * Number(newReservation.quantity),
-        expectedRevenue: p.price * Number(newReservation.quantity)
+        productId: p.id, productName: p.name, quantity: Number(newReservation.quantity),
+        cookieUnits: (p.units || 1) * Number(newReservation.quantity), expectedRevenue: p.price * Number(newReservation.quantity)
       });
     }
-
     if (finalCart.length === 0) return;
 
     finalCart.forEach(item => {
@@ -401,49 +409,33 @@ export default function CookieDashboard() {
     setNewReservation({ name: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, date: '' });
   };
   
-  // AUTOMAÇÃO: Reserva Concluída -> Venda Automática
   const handleUpdateReservationStatus = (id, status) => {
     const r = reservations.find(x => x.id === id);
     if (r && user) {
       saveToDb('reservations', id, { ...r, status });
-      
-      // Se foi concluída, envia para vendas automaticamente
       if (status === 'completed' && r.status !== 'completed') {
           const newSaleId = Math.random().toString(36).substr(2, 9);
-          saveToDb('sales', newSaleId, {
-              id: newSaleId, date: new Date().toISOString(),
-              quantity: r.quantity, cookieUnits: r.cookieUnits, 
-              revenue: r.expectedRevenue, customerName: r.name, productName: r.productName
-          });
-
+          saveToDb('sales', newSaleId, { id: newSaleId, date: new Date().toISOString(), quantity: r.quantity, cookieUnits: r.cookieUnits, revenue: r.expectedRevenue, customerName: r.name, productName: r.productName });
           const existingCustomer = customers.find(c => c.name.toLowerCase() === r.name.toLowerCase().trim());
-          if (existingCustomer) {
-              saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
-          } else {
+          if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
+          else {
               const newCustId = Math.random().toString(36).substr(2, 9);
-              saveToDb('customers', newCustId, { 
-                  id: newCustId, name: r.name.trim(), 
-                  referredBy: r.referredBy || null, purchases: 1 
-              });
+              saveToDb('customers', newCustId, { id: newCustId, name: r.name.trim(), referredBy: r.referredBy || null, purchases: 1 });
           }
       }
     }
   };
 
   const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
-
   const handleAddProduct = (e) => {
     e.preventDefault();
     if (!newProduct.name || !newProduct.price || !user) return;
     const newId = Math.random().toString(36).substr(2, 9);
-    saveToDb('products', newId, { 
-      id: newId, name: newProduct.name, price: Number(newProduct.price), type: newProduct.type, units: newProduct.type === 'combo' ? Number(newProduct.units) : 1
-    });
+    saveToDb('products', newId, { id: newId, name: newProduct.name, price: Number(newProduct.price), type: newProduct.type, units: newProduct.type === 'combo' ? Number(newProduct.units) : 1 });
     setNewProduct({ name: '', price: '', type: 'single', units: 2 });
   };
   const handleDeleteProduct = (id) => { if(user) deleteFromDb('products', id); };
 
-  // --- LÓGICA DA PLANILHA ---
   const handleSyncSheet = async () => {
     if (!sheetUrl) { alert("Por favor, cole o link da sua planilha."); return; }
     setIsSyncing(true);
@@ -621,17 +613,16 @@ export default function CookieDashboard() {
   
   return (
     <div className={`${darkMode ? 'dark' : ''} h-full`}>
-      {/* Ajustado de h-screen para h-[100dvh] para evitar cortes de fundo no mobile */}
       <div className="flex h-[100dvh] bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300 overflow-hidden">
         
         <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
           <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
-            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral</button>
-            <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo de Produtos</button>
+            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral (BI)</button>
+            <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo</button>
             <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
             <button onClick={() => setActiveTab('costs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'costs' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Calculator size={20} /> Custos & Sync</button>
-            <button onClick={() => setActiveTab('reservations')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'reservations' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><CalendarCheck size={20} /> Reservas</button>
+            <button onClick={() => setActiveTab('reservations')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'reservations' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><CalendarCheck size={20} /> Entregas</button>
             <button onClick={() => setActiveTab('network')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'network' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Network size={20} /> Rede</button>
             <button onClick={() => setActiveTab('suggestions')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'suggestions' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Lightbulb size={20} /> Ideias</button>
           </nav>
@@ -645,7 +636,6 @@ export default function CookieDashboard() {
           </div>
         </aside>
 
-        {/* Menu Mobile Simplificado */}
         <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex justify-around p-3 z-50">
            <button onClick={() => setActiveTab('dashboard')} className={`p-2 rounded-lg ${activeTab === 'dashboard' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><BarChart3 size={24}/></button>
            <button onClick={() => setActiveTab('products')} className={`p-2 rounded-lg ${activeTab === 'products' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ShoppingBag size={24}/></button>
@@ -654,154 +644,293 @@ export default function CookieDashboard() {
            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
         </div>
 
-        {/* Main Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
           
-          {/* TAB: DASHBOARD & VENDAS */}
+          {/* ========================================== */}
+          {/* TELA 1: DASHBOARD PRO (BUSINESS INTELLIGENCE) */}
+          {/* ========================================== */}
           {activeTab === 'dashboard' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4 gap-4">
+            <div className="space-y-8 max-w-7xl mx-auto">
+              
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-2 gap-4">
                 <div>
-                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Visão Geral</h2>
-                  <p className="text-gray-600 dark:text-gray-400 mt-1">Sua central de faturamento e entrada rápida de vendas.</p>
+                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Visão Geral <span className="text-amber-600 dark:text-amber-500 font-black">PRO</span></h2>
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">O cérebro do seu negócio. Acompanhe metas, lucro e tome decisões.</p>
                 </div>
-                <div className="flex items-center gap-3 bg-white dark:bg-gray-800 p-2 rounded-xl border border-amber-100 dark:border-gray-700 shadow-sm transition-colors">
-                  {lastSync && <span className="text-xs text-gray-500 dark:text-gray-400 font-medium flex items-center gap-1 pl-2"><Clock size={12}/> {lastSync}</span>}
-                  <button onClick={handleSyncSheet} disabled={isSyncing} className="bg-amber-100 dark:bg-amber-900/50 hover:bg-amber-200 dark:hover:bg-amber-800/50 text-amber-800 dark:text-amber-400 text-sm font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-70">
-                    <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} /> {isSyncing ? "Lendo..." : "Sincronizar"}
-                  </button>
+                <div className="flex items-center gap-3">
+                  {lastSync && <span className="text-xs text-gray-500 dark:text-gray-400 font-medium flex items-center gap-1"><Clock size={12}/> {lastSync}</span>}
                 </div>
               </div>
-              
-              {/* INSIGHTS AUTOMÁTICOS (NOVO) */}
-              {insights.length > 0 && (
-                <div className="bg-amber-900 dark:bg-gray-950 p-6 rounded-3xl shadow-lg text-white mb-6 border border-transparent dark:border-gray-800 transition-colors relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-amber-700/30 dark:bg-amber-900/20 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
-                  <h3 className="text-xl font-bold flex items-center gap-2 mb-4 relative z-10">
-                    <Zap className="text-amber-400" /> Inteligência do Negócio
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
-                    {insights.map((insight, idx) => (
-                      <div key={idx} className="bg-white/10 dark:bg-gray-800/50 p-4 rounded-2xl flex flex-col gap-3 backdrop-blur-sm border border-white/5 dark:border-gray-700 transition-colors">
-                        <div className={`w-fit p-2 rounded-xl ${insight.bg} ${insight.color}`}>
-                          {insight.icon}
-                        </div>
-                        <p className="text-sm font-medium leading-relaxed text-amber-50 dark:text-gray-300">
-                          {insight.text}
-                        </p>
-                      </div>
+
+              {/* 🎁 RECOMPENSAS (NOTIFICAÇÃO DE INDICAÇÃO) */}
+              {pendingRewards.length > 0 && (
+                <div className="bg-gradient-to-r from-amber-500 to-orange-500 p-5 rounded-3xl shadow-lg text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in slide-in-from-top-4">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-white/20 p-3 rounded-2xl"><Gift size={28} /></div>
+                    <div>
+                      <h3 className="font-bold text-lg leading-tight">Recompensas de Indicação!</h3>
+                      <p className="text-sm text-amber-50">Clientes atingiram os marcos do programa de fidelidade.</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    {pendingRewards.map(c => (
+                      <span key={c.id} className="bg-white dark:bg-gray-900 text-amber-800 dark:text-amber-400 px-3 py-1.5 rounded-xl text-sm font-bold shadow-sm flex items-center gap-2">
+                        {c.name} <span className="text-xs font-normal text-gray-500">({c.referralsCount} ind.)</span> ➔ 
+                        {c.referralsCount === 2 ? ' 1 Cookie Peq.' : ' 1 Cookie Trad.'}
+                      </span>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Cards de Métricas Globais */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
-                  <div className="relative z-10">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Faturamento Total</p>
-                    <p className="text-2xl font-bold text-gray-800 dark:text-gray-100">R$ {globalMetrics.totalRevenue.toFixed(2)}</p>
+              {/* 🟨 1. VISÃO RÁPIDA (Métricas Globais) */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">1. Visão Rápida (Total)</h3>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Faturamento</p>
+                    <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {globalMetrics.totalRevenue.toFixed(2)}</p>
                   </div>
-                  <DollarSign className="absolute -bottom-2 -right-2 text-green-50/50 dark:text-gray-700 w-20 h-20" />
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
-                  <div className="relative z-10">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Lucro Estimado</p>
-                    <p className="text-2xl font-bold text-green-600 dark:text-green-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Lucro Estimado</p>
+                    <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</p>
                   </div>
-                  <TrendingUp className="absolute -bottom-2 -right-2 text-green-50 dark:text-gray-700 w-20 h-20" />
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
-                  <div className="relative z-10">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Cookies Vendidos</p>
-                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-500">{globalMetrics.totalCookiesSold} un.</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Itens Vendidos</p>
+                    <p className="text-xl font-bold text-amber-700 dark:text-amber-500">{globalMetrics.totalCookiesSold} un.</p>
                   </div>
-                  <Cookie className="absolute -bottom-2 -right-2 text-amber-50 dark:text-gray-700 w-20 h-20" />
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 relative overflow-hidden transition-colors">
-                  <div className="relative z-10">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-1">Base de Clientes</p>
-                    <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{customers.length}</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Nº Clientes</p>
+                    <p className="text-xl font-bold text-blue-600 dark:text-blue-400">{customers.length}</p>
                   </div>
-                  <Users className="absolute -bottom-2 -right-2 text-blue-50 dark:text-gray-700 w-20 h-20" />
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 col-span-2 md:col-span-1 bg-amber-50/50 dark:bg-gray-800/80">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Ticket Médio</p>
+                    <p className="text-xl font-bold text-amber-900 dark:text-amber-300">R$ {globalMetrics.ticketMedio.toFixed(2)}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Formulário Rápido de Nova Venda (Agora com Carrinho!) */}
-                <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative flex flex-col transition-colors">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500 dark:bg-amber-600 rounded-full blur-3xl -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
-                  
-                  <h3 className="text-xl font-bold mb-6 flex items-center gap-2 relative z-10">
-                    <ShoppingCart size={22} /> Nova Venda Rápida
-                  </h3>
-                  
-                  <form onSubmit={handleFinalizeQuickSale} className="space-y-4 relative z-10 flex-1 flex flex-col">
-                    <div>
-                      <label className="block text-xs font-medium text-amber-100 mb-1">Nome do Cliente</label>
-                      <input required type="text" className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Ex: Maria" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
-                      <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>option]:text-gray-800 transition" value={quickSale.referredBy} onChange={e => setQuickSale({...quickSale, referredBy: e.target.value})}>
-                        <option value="">Ninguém</option>
-                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                    </div>
-
-                    <div className="bg-amber-700/30 dark:bg-amber-900/40 p-4 rounded-2xl border border-amber-500/30 dark:border-amber-600/30 mt-2">
-                      <label className="block text-xs font-medium text-amber-100 mb-1">Selecionar Item</label>
-                      <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition mb-3" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
-                        {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
-                          <>
-                            <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
-                            {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {p.price.toFixed(2)}</option>)}</optgroup>}
-                          </>
-                        )}
-                      </select>
-                      <div className="flex gap-3 mb-3">
-                        <div className="w-1/2">
-                          <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Quantidade</label>
-                          <input type="number" min="1" className="w-full p-2 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition text-center" value={quickSale.quantity} onChange={e => setQuickSale({...quickSale, quantity: Number(e.target.value)})} />
-                        </div>
-                        <div className="w-1/2">
-                          <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Total (R$)</label>
-                          <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
-                        </div>
-                      </div>
-                      <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
-                        + Adicionar ao Pedido
-                      </button>
-                    </div>
-
-                    {/* Exibição do Carrinho */}
-                    {quickSaleCart.length > 0 && (
-                      <div className="bg-white/10 p-3 rounded-xl text-sm border border-amber-400/30">
-                        <p className="font-bold text-amber-200 mb-2">Itens no Pedido:</p>
-                        {quickSaleCart.map((item, i) => (
-                          <div key={i} className="flex justify-between items-center text-amber-50 mb-1 pb-1 border-b border-amber-400/20 last:border-0">
-                            <span>{item.quantity}x {item.productName}</span>
-                            <div className="flex items-center gap-2">
-                              <span>R$ {item.revenue.toFixed(2)}</span>
-                              <button type="button" onClick={() => setQuickSaleCart(quickSaleCart.filter((_, idx) => idx !== i))} className="text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
-                            </div>
-                          </div>
-                        ))}
-                        <div className="pt-2 mt-1 font-bold text-white flex justify-between text-base">
-                           <span>Total:</span>
-                           <span>R$ {(quickSaleCart.reduce((a,b)=>a+b.revenue, 0) + (quickSale.quantity > 0 && quickSale.revenue > 0 && !quickSaleCart.find(i=>i.productId===quickSale.productId && i.quantity===quickSale.quantity) ? quickSale.revenue : 0)).toFixed(2)}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">
-                      Registrar Venda
-                    </button>
-                  </form>
+              {/* 🟩 2. DESEMPENHO E METAS (Hoje/Semana) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                   <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">2. Desempenho (Curto Prazo)</h3>
+                   <div className="grid grid-cols-2 gap-4 h-[calc(100%-2rem)]">
+                     <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-center relative overflow-hidden">
+                       <div className="relative z-10">
+                         <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-2">Vendas Hoje</p>
+                         <p className="text-3xl font-black text-gray-800 dark:text-gray-100 mb-3">R$ {timeStats.revToday.toFixed(2)}</p>
+                         <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold ${timeStats.todayGrowth >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
+                           {timeStats.todayGrowth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
+                           {timeStats.todayGrowth > 0 ? '+' : ''}{timeStats.todayGrowth.toFixed(1)}% vs Ontem
+                         </div>
+                       </div>
+                       <LineChart className="absolute -bottom-4 -right-4 text-gray-50 dark:text-gray-700/50 w-32 h-32" />
+                     </div>
+                     <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-center relative overflow-hidden">
+                       <div className="relative z-10">
+                         <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-2">Últimos 7 Dias</p>
+                         <p className="text-3xl font-black text-gray-800 dark:text-gray-100 mb-3">R$ {timeStats.rev7Days.toFixed(2)}</p>
+                         <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold ${timeStats.weekGrowth >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
+                           {timeStats.weekGrowth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
+                           {timeStats.weekGrowth > 0 ? '+' : ''}{timeStats.weekGrowth.toFixed(1)}% vs Sem. Passada
+                         </div>
+                       </div>
+                       <Calendar className="absolute -bottom-4 -right-4 text-gray-50 dark:text-gray-700/50 w-32 h-32" />
+                     </div>
+                   </div>
                 </div>
 
-                {/* Gráfico Interativo de Faturamento */}
-                <div className="lg:col-span-2 bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 flex flex-col transition-colors">
+                <div>
+                   <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">3. Crescimento e Metas</h3>
+                   <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 h-[calc(100%-2rem)] flex flex-col justify-center space-y-6">
+                     
+                     <div>
+                       <div className="flex justify-between items-end mb-2">
+                         <div>
+                           <p className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Target size={16} className="text-amber-500"/> Meta Diária</p>
+                           <p className="text-xs text-gray-400 mt-0.5">R$ {timeStats.revToday.toFixed(2)} / R$ <input type="number" className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.daily} onChange={(e) => setGoals({...goals, daily: Number(e.target.value)})}/></p>
+                         </div>
+                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.revToday / goals.daily) * 100, 100).toFixed(0)}%</span>
+                       </div>
+                       <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.revToday / goals.daily) * 100, 100)}%` }}></div>
+                       </div>
+                     </div>
+
+                     <div>
+                       <div className="flex justify-between items-end mb-2">
+                         <div>
+                           <p className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Target size={16} className="text-amber-500"/> Meta Semanal</p>
+                           <p className="text-xs text-gray-400 mt-0.5">R$ {timeStats.rev7Days.toFixed(2)} / R$ <input type="number" className="w-16 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.weekly} onChange={(e) => setGoals({...goals, weekly: Number(e.target.value)})}/></p>
+                         </div>
+                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.rev7Days / goals.weekly) * 100, 100).toFixed(0)}%</span>
+                       </div>
+                       <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.rev7Days / goals.weekly) * 100, 100)}%` }}></div>
+                       </div>
+                     </div>
+
+                     <div className="pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <Crosshair className="text-blue-500" size={20}/>
+                          <div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Projeção do Mês (se continuar assim)</p>
+                            <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {projection.toFixed(2)}</p>
+                          </div>
+                        </div>
+                     </div>
+
+                   </div>
+                </div>
+              </div>
+
+              {/* 🟦 4. INTELIGÊNCIA DE PRODUTO E CLIENTE */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">4. Inteligência de Produto & Clientes</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700">
+                    <div className="bg-amber-100 dark:bg-amber-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4"><Trophy size={20}/></div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Produto Mais Vendido</p>
+                    <p className="text-lg font-bold text-gray-800 dark:text-gray-100">{productIntel?.topSold?.name || 'Nenhum dado'}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 font-medium">{productIntel?.topSold?.qty || 0} unidades vendidas</p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-green-100 dark:border-gray-700">
+                    <div className="bg-green-100 dark:bg-green-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-green-600 dark:text-green-400 mb-4"><Flame size={20}/></div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Produto Mais Lucrativo</p>
+                    <p className="text-lg font-bold text-gray-800 dark:text-gray-100">{productIntel?.topProfit?.name || 'Nenhum dado'}</p>
+                    <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">R$ {productIntel?.topProfit?.profit?.toFixed(2) || 0} gerados em lucro</p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-blue-100 dark:border-gray-700">
+                    <div className="bg-blue-100 dark:bg-blue-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400 mb-4"><UsersRound size={20}/></div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Comportamento (Clientes)</p>
+                    <div className="flex items-end gap-2 mt-1">
+                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{customerIntel.recorrentesPercent.toFixed(0)}%</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">são clientes fiéis (recorrentes).</p>
+                    </div>
+                    <div className="flex justify-between text-xs font-medium text-gray-400 mt-2">
+                       <span>{customerIntel.novos} Novos</span>
+                       <span>{customerIntel.recorrentes} Fiéis</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 🟪 5. OPERAÇÃO (O que fazer agora) */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">5. Operação (Vendas & Entregas)</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  
+                  {/* Formulário Rápido de Nova Venda (Carrinho) */}
+                  <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative flex flex-col transition-colors">
+                    <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500 dark:bg-amber-600 rounded-full blur-3xl -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
+                    
+                    <h3 className="text-xl font-bold mb-6 flex items-center gap-2 relative z-10">
+                      <ShoppingCart size={22} /> Nova Venda Rápida
+                    </h3>
+                    
+                    <form onSubmit={handleFinalizeQuickSale} className="space-y-4 relative z-10 flex-1 flex flex-col">
+                      <div>
+                        <label className="block text-xs font-medium text-amber-100 mb-1">Nome do Cliente</label>
+                        <input required type="text" className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Ex: Maria" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
+                        <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>option]:text-gray-800 transition" value={quickSale.referredBy} onChange={e => setQuickSale({...quickSale, referredBy: e.target.value})}>
+                          <option value="">Ninguém</option>
+                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="bg-amber-700/30 dark:bg-amber-900/40 p-4 rounded-2xl border border-amber-500/30 dark:border-amber-600/30 mt-2">
+                        <label className="block text-xs font-medium text-amber-100 mb-1">Selecionar Item</label>
+                        <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition mb-3" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
+                          {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
+                            <>
+                              <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
+                              {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {p.price.toFixed(2)}</option>)}</optgroup>}
+                            </>
+                          )}
+                        </select>
+                        <div className="flex gap-3 mb-3">
+                          <div className="w-1/2">
+                            <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Quantidade</label>
+                            <input type="number" min="1" className="w-full p-2 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition text-center" value={quickSale.quantity} onChange={e => setQuickSale({...quickSale, quantity: Number(e.target.value)})} />
+                          </div>
+                          <div className="w-1/2">
+                            <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Total (R$)</label>
+                            <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
+                          </div>
+                        </div>
+                        <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
+                          + Adicionar ao Pedido
+                        </button>
+                      </div>
+
+                      {/* Exibição do Carrinho */}
+                      {quickSaleCart.length > 0 && (
+                        <div className="bg-white/10 p-3 rounded-xl text-sm border border-amber-400/30">
+                          <p className="font-bold text-amber-200 mb-2">Itens no Pedido:</p>
+                          {quickSaleCart.map((item, i) => (
+                            <div key={i} className="flex justify-between items-center text-amber-50 mb-1 pb-1 border-b border-amber-400/20 last:border-0">
+                              <span>{item.quantity}x {item.productName}</span>
+                              <div className="flex items-center gap-2">
+                                <span>R$ {item.revenue.toFixed(2)}</span>
+                                <button type="button" onClick={() => setQuickSaleCart(quickSaleCart.filter((_, idx) => idx !== i))} className="text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
+                              </div>
+                            </div>
+                          ))}
+                          <div className="pt-2 mt-1 font-bold text-white flex justify-between text-base">
+                             <span>Total:</span>
+                             <span>R$ {(quickSaleCart.reduce((a,b)=>a+b.revenue, 0) + (quickSale.quantity > 0 && quickSale.revenue > 0 && !quickSaleCart.find(i=>i.productId===quickSale.productId && i.quantity===quickSale.quantity) ? quickSale.revenue : 0)).toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <button type="submit" className="w-full bg-white text-amber-700 hover:bg-amber-50 dark:text-gray-900 dark:hover:bg-gray-100 py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">
+                        Registrar Venda
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="lg:col-span-2 space-y-6">
+                    {/* Pedidos Pendentes e Produção */}
+                    <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 p-6 flex flex-col transition-colors">
+                      <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-4">
+                        <Clock className="text-amber-600 dark:text-amber-500" size={20}/> Entregas Pendentes (Receita: R$ {expectedMetrics.revenue.toFixed(2)})
+                      </h3>
+                      <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                        {pendingReservationsList.length === 0 ? (
+                          <p className="text-sm text-gray-400 text-center mt-4">Nenhuma encomenda pendente para entregar.</p>
+                        ) : (
+                          pendingReservationsList.slice(0, 4).map(res => (
+                            <div key={res.id} className="flex justify-between items-center p-3 bg-amber-50/50 dark:bg-gray-700/50 rounded-xl border border-amber-100/50 dark:border-gray-600 transition-colors">
+                              <div>
+                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200 truncate max-w-[150px]">{res.name}</p>
+                                <p className="text-[10px] text-gray-500 dark:text-gray-400">{res.quantity}x {res.productName}</p>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-gray-800 px-2 py-1 rounded-lg border border-transparent dark:border-gray-600">
+                                  {res.date ? new Date(res.date).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'}) : 'A comb.'}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      
+                      <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                        <p className="text-sm font-bold text-gray-600 dark:text-gray-400">Total a Produzir:</p>
+                        <p className="text-lg font-black text-amber-700 dark:text-amber-500">{expectedMetrics.cookies} unidades</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 🟫 6. Gráfico Interativo Histórico */}
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">6. Histórico de Evolução</h3>
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 flex flex-col transition-colors">
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
@@ -811,11 +940,11 @@ export default function CookieDashboard() {
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <button onClick={() => setShowSalesHistory(true)} className="flex items-center gap-2 text-sm bg-amber-50 dark:bg-gray-700 hover:bg-amber-100 dark:hover:bg-gray-600 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded-lg transition-colors font-medium border border-amber-200 dark:border-gray-600">
-                        <History size={16} /> Ver Histórico
+                        <History size={16} /> Ver Histórico Detalhado
                       </button>
                       <div className="flex items-center gap-4 text-xs font-medium mt-1 text-gray-600 dark:text-gray-300">
-                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-600"></div> Receita Bruta</span>
-                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500 dark:bg-green-500"></div> Lucro Estimado</span>
+                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-600"></div> Receita</span>
+                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500 dark:bg-green-500"></div> Lucro</span>
                       </div>
                     </div>
                   </div>
@@ -849,6 +978,7 @@ export default function CookieDashboard() {
                   </div>
                 </div>
               </div>
+
             </div>
           )}
 
@@ -960,7 +1090,7 @@ export default function CookieDashboard() {
                 <div className="relative z-10 flex flex-col md:flex-row gap-8 items-center">
                   <div className="flex-1">
                     <h3 className="text-2xl font-bold mb-2 flex items-center gap-2 text-white"><FileSpreadsheet className="text-amber-300 dark:text-amber-400" /> Vínculo com Planilha Excel/Sheets</h3>
-                    <p className="text-amber-100 dark:text-gray-300 text-sm leading-relaxed mb-4">Seus lucros do painel principal dependem da Ficha Técnica. Cole o link da sua planilha aqui e sincronize para manter os custos da matéria-prima atualizados.</p>
+                    <p className="text-amber-100 dark:text-gray-300 text-sm leading-relaxed mb-4">Atenção: A Ficha Técnica atual baseia-se num único custo base (Receita Padrão) para simplificar a operação. Cole o link da sua planilha para atualizar o custo da massa.</p>
                     <div className="flex flex-col sm:flex-row gap-3">
                       <div className="flex-1 relative">
                         <LinkIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
@@ -980,24 +1110,24 @@ export default function CookieDashboard() {
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
                     <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Package size={16}/><h3 className="font-medium text-xs">Custo por Receita</h3></div>
+                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Package size={16}/><h3 className="font-medium text-xs">Custo da Receita Base</h3></div>
                         <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.totalRecipeCost.toFixed(2)}</p>
                       </div>
                       <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Calculator size={16}/><h3 className="font-medium text-xs">Custo Unitário</h3></div>
+                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Calculator size={16}/><h3 className="font-medium text-xs">Custo Unitário (Massa)</h3></div>
                         <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.costPerCookie.toFixed(2)}</p>
                       </div>
                       <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><DollarSign size={16} className="text-green-500"/><h3 className="font-medium text-xs text-green-700 dark:text-green-400">Lucro por Unidade</h3></div>
+                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><DollarSign size={16} className="text-green-500"/><h3 className="font-medium text-xs text-green-700 dark:text-green-400">Lucro Médio Unitário</h3></div>
                         <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {costMetrics.profit.toFixed(2)}</p>
                       </div>
                       <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><TrendingUp size={16} className="text-purple-500"/><h3 className="font-medium text-xs text-purple-700 dark:text-purple-400">Margem</h3></div>
+                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><TrendingUp size={16} className="text-purple-500"/><h3 className="font-medium text-xs text-purple-700 dark:text-purple-400">Margem (Produto Base)</h3></div>
                         <p className="text-xl font-bold text-purple-600 dark:text-purple-400">{costMetrics.profitMargin.toFixed(1)}%</p>
                       </div>
                     </div>
                     <div className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl border border-amber-200 dark:border-gray-700 transition-colors">
-                      <h3 className="font-bold text-amber-900 dark:text-gray-200 mb-3 text-sm">Simulador Base</h3>
+                      <h3 className="font-bold text-amber-900 dark:text-gray-200 mb-3 text-sm">Simulador de Custos</h3>
                       <div className="space-y-3">
                         <div className="flex justify-between items-center">
                           <label className="text-xs font-medium text-amber-800 dark:text-gray-400">Rendimento (un):</label>
@@ -1008,18 +1138,6 @@ export default function CookieDashboard() {
                           <input type="number" step="0.5" className="w-20 p-1 text-center text-sm border border-amber-200 dark:border-gray-600 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 outline-none" value={recipeConfig.salePrice} onChange={(e) => setRecipeConfig({...recipeConfig, salePrice: Number(e.target.value) || 0})} />
                         </div>
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 mb-8 transition-colors">
-                    <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><PieChart className="text-amber-600 dark:text-amber-500" size={20} /> Composição de Preço Base (1 Unidade)</h3>
-                    <div className="flex items-center h-10 rounded-full overflow-hidden w-full bg-gray-100 dark:bg-gray-900 mt-2 border border-gray-200 dark:border-gray-700">
-                      <div className="h-full bg-orange-400 dark:bg-orange-500 flex items-center justify-center text-white text-xs font-bold transition-all" style={{ width: `${Math.max((costMetrics.costPerCookie / recipeConfig.salePrice) * 100, 0)}%` }}>{(costMetrics.costPerCookie / recipeConfig.salePrice * 100) > 10 && 'Custo'}</div>
-                      <div className="h-full bg-green-500 dark:bg-green-600 flex items-center justify-center text-white text-xs font-bold transition-all" style={{ width: `${Math.max((costMetrics.profit / recipeConfig.salePrice) * 100, 0)}%` }}>{(costMetrics.profit / recipeConfig.salePrice * 100) > 10 && 'Lucro Líquido'}</div>
-                    </div>
-                    <div className="flex justify-between text-sm mt-3 px-2">
-                      <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300"><div className="w-3 h-3 rounded-full bg-orange-400 dark:bg-orange-500"></div>Custo: R$ {costMetrics.costPerCookie.toFixed(2)}</div>
-                      <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300"><div className="w-3 h-3 rounded-full bg-green-500 dark:bg-green-600"></div>Lucro: R$ {costMetrics.profit.toFixed(2)}</div>
                     </div>
                   </div>
                 </>
@@ -1033,7 +1151,6 @@ export default function CookieDashboard() {
                   <div className="p-12 text-center flex flex-col items-center justify-center bg-white dark:bg-gray-800">
                      <FileSpreadsheet className="text-amber-200 dark:text-gray-600 mb-3" size={48} />
                      <p className="text-gray-500 dark:text-gray-400 font-medium text-lg">Aguardando Sincronização...</p>
-                     <p className="text-gray-400 dark:text-gray-500 text-sm max-w-sm mt-2">Insira o link da sua planilha no painel acima para calcular automaticamente seus custos e margem de lucro.</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto bg-white dark:bg-gray-800">
@@ -1291,51 +1408,6 @@ export default function CookieDashboard() {
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* MODAL DE HISTÓRICO DE VENDAS */}
-          {showSalesHistory && (
-            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-8">
-              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-900/50 transition-colors">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                      <History className="text-amber-600 dark:text-amber-500" /> Histórico Detalhado
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registo completo de todas as vendas efetuadas.</p>
-                  </div>
-                  <button onClick={() => setShowSalesHistory(false)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 rounded-xl transition-colors"><X size={24} /></button>
-                </div>
-                
-                <div className="p-6 overflow-y-auto flex-1 bg-gray-50/30 dark:bg-gray-900/30 transition-colors">
-                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-amber-50 dark:bg-gray-900 text-amber-900 dark:text-amber-400 border-b border-amber-100 dark:border-gray-700">
-                          <th className="p-4 font-semibold">Data / Hora</th><th className="p-4 font-semibold">Cliente</th><th className="p-4 font-semibold text-center">Quantidade</th><th className="p-4 font-semibold text-right">Receita (R$)</th><th className="p-4 font-semibold text-right">Lucro Est. (R$)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sales.length === 0 ? (
-                          <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhuma venda registada ainda.</td></tr>
-                        ) : [...sales].sort((a,b) => new Date(b.date) - new Date(a.date)).map(sale => {
-                          const estProfit = sale.revenue - ((sale.cookieUnits || sale.quantity) * costMetrics.costPerCookie);
-                          return (
-                            <tr key={sale.id} className="border-b border-gray-50 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{new Date(sale.date).toLocaleDateString('pt-BR')} <br/><span className="text-xs text-gray-400 dark:text-gray-500">{new Date(sale.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</span></td>
-                              <td className="p-4"><p className="font-medium text-gray-800 dark:text-gray-200">{sale.customerName || 'Cliente Balcão'}</p><p className="text-xs text-amber-600 dark:text-amber-400 font-medium">{sale.productName || 'Produto Avulso'}</p></td>
-                              <td className="p-4 text-center"><span className="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-400 px-2 py-1 rounded-lg text-xs font-bold">{sale.quantity} un.</span>{sale.cookieUnits > sale.quantity && <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">({sale.cookieUnits} cookies)</p>}</td>
-                              <td className="p-4 text-right font-medium text-gray-800 dark:text-gray-200">R$ {sale.revenue.toFixed(2)}</td>
-                              <td className="p-4 text-right font-bold text-green-600 dark:text-green-400">R$ {estProfit.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               </div>
             </div>
           )}
