@@ -211,6 +211,7 @@ export default function CookieDashboard() {
     let revToday = 0, revYesterday = 0, rev7Days = 0, revPrev7Days = 0;
 
     sales.forEach(s => {
+      if (!s.date) return;
       const d = new Date(s.date);
       if (d >= today) revToday += s.revenue;
       else if (d >= yesterday && d < today) revYesterday += s.revenue;
@@ -251,7 +252,7 @@ export default function CookieDashboard() {
   // 4. Projeção Mensal
   const projection = useMemo(() => {
     const currentMonth = new Date().getMonth();
-    const revThisMonth = sales.filter(s => new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
+    const revThisMonth = sales.filter(s => s.date && new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
     const daysPassed = Math.max(1, new Date().getDate());
     const daysInMonth = new Date(new Date().getFullYear(), currentMonth + 1, 0).getDate();
     return (revThisMonth / daysPassed) * daysInMonth;
@@ -353,6 +354,7 @@ export default function CookieDashboard() {
     }
 
     sales.forEach(sale => {
+      if (!sale.date) return;
       const saleDate = new Date(sale.date);
       const week = stats.find(w => saleDate >= w.start && saleDate <= w.end);
       if (week) {
@@ -363,6 +365,9 @@ export default function CookieDashboard() {
     });
     return stats;
   }, [sales, costMetrics]);
+
+  const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10);
+  const rootCustomers = customers.filter(c => !c.referredBy);
 
 
   // ==========================================
@@ -660,9 +665,6 @@ export default function CookieDashboard() {
       </div>
     );
   }
-
-  const rootCustomers = customers.filter(c => !c.referredBy);
-  const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10); 
   
   return (
     <div className={`${darkMode ? 'dark' : ''} h-full relative`}>
@@ -736,7 +738,7 @@ export default function CookieDashboard() {
               )}
 
               <div>
-                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">1. Visão Rápida (Total)</h3>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Visão Rápida (Total)</h3>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                     <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Faturamento</p>
@@ -763,7 +765,7 @@ export default function CookieDashboard() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
-                   <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">2. Desempenho (Curto Prazo)</h3>
+                   <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Desempenho (Curto Prazo)</h3>
                    <div className="grid grid-cols-2 gap-4 h-[calc(100%-2rem)]">
                      <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-center relative overflow-hidden">
                        <div className="relative z-10">
@@ -791,7 +793,7 @@ export default function CookieDashboard() {
                 </div>
 
                 <div>
-                   <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">3. Crescimento e Metas</h3>
+                   <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Crescimento e Metas</h3>
                    <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 h-[calc(100%-2rem)] flex flex-col justify-center space-y-6">
                      <div>
                        <div className="flex justify-between items-end mb-2">
@@ -833,7 +835,7 @@ export default function CookieDashboard() {
               </div>
 
               <div>
-                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">4. Inteligência de Produto & Clientes</h3>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Inteligência de Produto & Clientes</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700">
                     <div className="bg-amber-100 dark:bg-amber-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4"><Trophy size={20}/></div>
@@ -863,7 +865,7 @@ export default function CookieDashboard() {
               </div>
 
               <div>
-                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">5. Operação (Vendas & Entregas)</h3>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Operação (Vendas & Entregas)</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   
                   <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative flex flex-col transition-colors">
@@ -984,7 +986,7 @@ export default function CookieDashboard() {
               </div>
 
               <div>
-                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">6. Histórico de Evolução</h3>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Histórico de Evolução</h3>
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 flex flex-col transition-colors">
                   <div className="flex justify-between items-start mb-6">
                     <div>
@@ -995,7 +997,7 @@ export default function CookieDashboard() {
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <button onClick={() => setShowSalesHistory(true)} className="flex items-center gap-2 text-sm bg-amber-50 dark:bg-gray-700 hover:bg-amber-100 dark:hover:bg-gray-600 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded-lg transition-colors font-medium border border-amber-200 dark:border-gray-600">
-                        <History size={16} /> Ver Histórico
+                        <History size={16} /> Ver Histórico Detalhado
                       </button>
                       <div className="flex items-center gap-4 text-xs font-medium mt-1 text-gray-600 dark:text-gray-300">
                         <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-600"></div> Receita</span>
@@ -1012,8 +1014,8 @@ export default function CookieDashboard() {
                     </div>
 
                     {weeklyStats.map((data, index) => {
-                      const revenueHeight = (data.revenue / maxWeeklyRevenue) * 100;
-                      const profitHeight = data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
+                      const revenueHeight = maxWeeklyRevenue > 0 ? (data.revenue / maxWeeklyRevenue) * 100 : 0;
+                      const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
                       return (
                         <div key={index} className="flex flex-col items-center flex-1 group z-10 h-full justify-end">
                           <div className="w-full max-w-[48px] relative h-full flex items-end justify-center">
