@@ -12,7 +12,7 @@ import {
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
   AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
-  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, Percent
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -38,6 +38,12 @@ try {
 const INITIAL_PRODUCTS = [
   { id: 'prod-1', name: 'Cookie Tradicional', price: 10.00, type: 'single', units: 1 }
 ];
+
+// Helper para obter a data de hoje no formato YYYY-MM-DD
+const getTodayYMD = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
 
 export default function CookieDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -65,7 +71,7 @@ export default function CookieDashboard() {
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
   
   const [recipeConfig, setRecipeConfig] = useState({ yield: 12, salePrice: 10.00 });
-  const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); // Novas Metas!
+  const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); 
   const [sheetUrl, setSheetUrl] = useState('');
   const [lastSync, setLastSync] = useState(null);
 
@@ -76,11 +82,13 @@ export default function CookieDashboard() {
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
   
   // Carrinhos de Múltiplos Itens (Vendas e Reservas)
-  const [quickSale, setQuickSale] = useState({ customerName: '', referredBy: '', productId: '', quantity: 1, revenue: 0 });
+  const [quickSale, setQuickSale] = useState({ customerName: '', referredBy: '', productId: '', quantity: 1, revenue: 0, date: getTodayYMD() });
   const [quickSaleCart, setQuickSaleCart] = useState([]);
   
   const [newReservation, setNewReservation] = useState({ name: '', referredBy: '', productId: '', quantity: 1, date: '' });
   const [reservationCart, setReservationCart] = useState([]);
+
+  const [productionBatches, setProductionBatches] = useState(1);
 
   const [customerSortBy, setCustomerSortBy] = useState('name-asc');
   const [suggestionMatchContext, setSuggestionMatchContext] = useState(null);
@@ -175,7 +183,8 @@ export default function CookieDashboard() {
     const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((ing.bulkPrice / ing.bulkQty) * ing.recipeQty), 0);
     const costPerCookie = totalRecipeCost / (recipeConfig.yield || 1);
     const profit = recipeConfig.salePrice - costPerCookie;
-    return { totalRecipeCost, costPerCookie, profit };
+    const profitMargin = recipeConfig.salePrice > 0 ? (profit / recipeConfig.salePrice) * 100 : 0;
+    return { totalRecipeCost, costPerCookie, profit, profitMargin };
   }, [ingredients, recipeConfig]);
 
   // --- 🧠 MÓDULO INTELIGÊNCIA DE NEGÓCIO (BI) ---
@@ -261,6 +270,39 @@ export default function CookieDashboard() {
     const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
     return { revenue, cookies, batchesNeeded };
   }, [pendingReservationsList, recipeConfig.yield]);
+
+  // --- CÁLCULOS DE ESTOQUE E PRODUÇÃO ---
+  const inventoryCheck = useMemo(() => {
+    const list = ingredients.map(ing => {
+      const isPowder = ing.unit.toLowerCase() === 'g' || ing.unit.toLowerCase() === 'kg' || ing.unit.toLowerCase() === 'ml' || ing.unit.toLowerCase() === 'l';
+      const wasteFactor = isPowder ? 1.02 : 1; 
+      const totalNeeded = (ing.recipeQty * wasteFactor) * productionBatches;
+      const currentStock = parseFloat(ing.currentStock) || 0;
+      const missing = Math.max(0, totalNeeded - currentStock);
+      const costToBuy = missing > 0 ? (missing / ing.bulkQty) * ing.bulkPrice : 0;
+      return { ...ing, totalNeeded, missing, costToBuy, isPowder, wasteFactor };
+    });
+    const totalMissingCost = list.reduce((sum, item) => sum + item.costToBuy, 0);
+    const canProduce = list.every(item => item.missing === 0);
+    return { list, totalMissingCost, canProduce };
+  }, [ingredients, productionBatches]);
+
+  const handleUpdateStock = (id, val) => {
+    const newStock = parseFloat(val) || 0;
+    const item = ingredients.find(i => i.id === id);
+    if(item && user) saveToDb('ingredients', id, { ...item, currentStock: newStock });
+  };
+
+  const handleProduce = () => {
+    ingredients.forEach(ing => {
+      const itemCheck = inventoryCheck.list.find(i => i.id === ing.id);
+      if(itemCheck) {
+        const newStock = Math.max(0, (ing.currentStock || 0) - itemCheck.totalNeeded);
+        if(user) saveToDb('ingredients', ing.id, { ...ing, currentStock: newStock });
+      }
+    });
+    setProductionBatches(1);
+  };
 
   // --- CÁLCULOS DE CLIENTES ---
   const customersWithStats = useMemo(() => {
@@ -352,10 +394,16 @@ export default function CookieDashboard() {
     }
     if (finalCart.length === 0) return;
 
+    const todayYMD = getTodayYMD();
+    let saleDateIso = new Date().toISOString();
+    if (quickSale.date && quickSale.date !== todayYMD) {
+      saleDateIso = new Date(`${quickSale.date}T12:00:00`).toISOString();
+    }
+
     finalCart.forEach(item => {
       const newSaleId = Math.random().toString(36).substr(2, 9);
       saveToDb('sales', newSaleId, {
-        id: newSaleId, date: new Date().toISOString(), quantity: item.quantity, cookieUnits: item.cookieUnits, 
+        id: newSaleId, date: saleDateIso, quantity: item.quantity, cookieUnits: item.cookieUnits, 
         revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName
       });
     });
@@ -368,7 +416,7 @@ export default function CookieDashboard() {
     }
 
     setQuickSaleCart([]);
-    setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice });
+    setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD() });
   };
 
   const handleAddToCartReservation = () => {
@@ -480,7 +528,11 @@ export default function CookieDashboard() {
               if (j !== bulkPriceIdx && j !== bulkQtyIdx) { let val = parseNumber(row[j]); if (val > 0) { rQty = val; break; } }
             }
           }
-          parsedIngredients.push({ id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]), unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty });
+          
+          const existingItem = ingredients.find(old => old.name.toLowerCase() === name.toLowerCase());
+          const currentStock = existingItem ? (existingItem.currentStock || 0) : 0;
+
+          parsedIngredients.push({ id: i.toString(), name: name, bulkQty: parseNumber(row[bulkQtyIdx]), unit: clean(row[unitIdx]) || 'un', bulkPrice: parseNumber(row[bulkPriceIdx]), recipeQty: rQty, currentStock });
         }
       }
 
@@ -608,18 +660,19 @@ export default function CookieDashboard() {
     );
   }
 
-  const rootCustomers = customers.filter(c => !c.referredBy);
   const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10); 
   
   return (
     <div className={`${darkMode ? 'dark' : ''} h-full`}>
       <div className="flex h-[100dvh] bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300 overflow-hidden">
         
+        {/* Sidebar */}
         <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
           <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
             <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral (BI)</button>
             <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo</button>
+            <button onClick={() => setActiveTab('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'inventory' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ClipboardList size={20} /> Estoque & Produção</button>
             <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
             <button onClick={() => setActiveTab('costs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'costs' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Calculator size={20} /> Custos & Sync</button>
             <button onClick={() => setActiveTab('reservations')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'reservations' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><CalendarCheck size={20} /> Entregas</button>
@@ -636,9 +689,10 @@ export default function CookieDashboard() {
           </div>
         </aside>
 
+        {/* Mobile Menu */}
         <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex justify-around p-3 z-50">
            <button onClick={() => setActiveTab('dashboard')} className={`p-2 rounded-lg ${activeTab === 'dashboard' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><BarChart3 size={24}/></button>
-           <button onClick={() => setActiveTab('products')} className={`p-2 rounded-lg ${activeTab === 'products' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ShoppingBag size={24}/></button>
+           <button onClick={() => setActiveTab('inventory')} className={`p-2 rounded-lg ${activeTab === 'inventory' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ClipboardList size={24}/></button>
            <button onClick={() => setActiveTab('reservations')} className={`p-2 rounded-lg ${activeTab === 'reservations' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><CalendarCheck size={24}/></button>
            <button onClick={() => setActiveTab('costs')} className={`p-2 rounded-lg ${activeTab === 'costs' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Calculator size={24}/></button>
            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
@@ -646,12 +700,9 @@ export default function CookieDashboard() {
 
         <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
           
-          {/* ========================================== */}
-          {/* TELA 1: DASHBOARD PRO (BUSINESS INTELLIGENCE) */}
-          {/* ========================================== */}
+          {/* TAB: DASHBOARD PRO */}
           {activeTab === 'dashboard' && (
             <div className="space-y-8 max-w-7xl mx-auto">
-              
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-2 gap-4">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Visão Geral <span className="text-amber-600 dark:text-amber-500 font-black">PRO</span></h2>
@@ -662,7 +713,6 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
-              {/* 🎁 RECOMPENSAS (NOTIFICAÇÃO DE INDICAÇÃO) */}
               {pendingRewards.length > 0 && (
                 <div className="bg-gradient-to-r from-amber-500 to-orange-500 p-5 rounded-3xl shadow-lg text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in slide-in-from-top-4">
                   <div className="flex items-center gap-4">
@@ -683,7 +733,6 @@ export default function CookieDashboard() {
                 </div>
               )}
 
-              {/* 🟨 1. VISÃO RÁPIDA (Métricas Globais) */}
               <div>
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">1. Visão Rápida (Total)</h3>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -710,7 +759,6 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
-              {/* 🟩 2. DESEMPENHO E METAS (Hoje/Semana) */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
                    <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">2. Desempenho (Curto Prazo)</h3>
@@ -743,7 +791,6 @@ export default function CookieDashboard() {
                 <div>
                    <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">3. Crescimento e Metas</h3>
                    <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 h-[calc(100%-2rem)] flex flex-col justify-center space-y-6">
-                     
                      <div>
                        <div className="flex justify-between items-end mb-2">
                          <div>
@@ -779,12 +826,10 @@ export default function CookieDashboard() {
                           </div>
                         </div>
                      </div>
-
                    </div>
                 </div>
               </div>
 
-              {/* 🟦 4. INTELIGÊNCIA DE PRODUTO E CLIENTE */}
               <div>
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">4. Inteligência de Produto & Clientes</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -815,12 +860,10 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
-              {/* 🟪 5. OPERAÇÃO (O que fazer agora) */}
               <div>
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">5. Operação (Vendas & Entregas)</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   
-                  {/* Formulário Rápido de Nova Venda (Carrinho) */}
                   <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative flex flex-col transition-colors">
                     <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500 dark:bg-amber-600 rounded-full blur-3xl -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
                     
@@ -833,12 +876,25 @@ export default function CookieDashboard() {
                         <label className="block text-xs font-medium text-amber-100 mb-1">Nome do Cliente</label>
                         <input required type="text" className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Ex: Maria" />
                       </div>
-                      <div>
-                        <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
-                        <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>option]:text-gray-800 transition" value={quickSale.referredBy} onChange={e => setQuickSale({...quickSale, referredBy: e.target.value})}>
-                          <option value="">Ninguém</option>
-                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                      
+                      <div className="flex gap-3">
+                        <div className="w-1/2">
+                          <label className="block text-xs font-medium text-amber-100 mb-1">Data da Venda</label>
+                          <input 
+                            type="date" 
+                            required 
+                            className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white transition [&::-webkit-calendar-picker-indicator]:invert" 
+                            value={quickSale.date} 
+                            onChange={e => setQuickSale({...quickSale, date: e.target.value})} 
+                          />
+                        </div>
+                        <div className="w-1/2">
+                          <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
+                          <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>option]:text-gray-800 transition" value={quickSale.referredBy} onChange={e => setQuickSale({...quickSale, referredBy: e.target.value})}>
+                            <option value="">Ninguém</option>
+                            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                        </div>
                       </div>
 
                       <div className="bg-amber-700/30 dark:bg-amber-900/40 p-4 rounded-2xl border border-amber-500/30 dark:border-amber-600/30 mt-2">
@@ -866,7 +922,6 @@ export default function CookieDashboard() {
                         </button>
                       </div>
 
-                      {/* Exibição do Carrinho */}
                       {quickSaleCart.length > 0 && (
                         <div className="bg-white/10 p-3 rounded-xl text-sm border border-amber-400/30">
                           <p className="font-bold text-amber-200 mb-2">Itens no Pedido:</p>
@@ -893,7 +948,6 @@ export default function CookieDashboard() {
                   </div>
 
                   <div className="lg:col-span-2 space-y-6">
-                    {/* Pedidos Pendentes e Produção */}
                     <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 p-6 flex flex-col transition-colors">
                       <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-4">
                         <Clock className="text-amber-600 dark:text-amber-500" size={20}/> Entregas Pendentes (Receita: R$ {expectedMetrics.revenue.toFixed(2)})
@@ -927,7 +981,6 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
-              {/* 🟫 6. Gráfico Interativo Histórico */}
               <div>
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">6. Histórico de Evolução</h3>
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 flex flex-col transition-colors">
@@ -940,7 +993,7 @@ export default function CookieDashboard() {
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <button onClick={() => setShowSalesHistory(true)} className="flex items-center gap-2 text-sm bg-amber-50 dark:bg-gray-700 hover:bg-amber-100 dark:hover:bg-gray-600 text-amber-700 dark:text-amber-400 px-3 py-1.5 rounded-lg transition-colors font-medium border border-amber-200 dark:border-gray-600">
-                        <History size={16} /> Ver Histórico Detalhado
+                        <History size={16} /> Ver Histórico
                       </button>
                       <div className="flex items-center gap-4 text-xs font-medium mt-1 text-gray-600 dark:text-gray-300">
                         <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-200 dark:bg-amber-600"></div> Receita</span>
@@ -979,6 +1032,134 @@ export default function CookieDashboard() {
                 </div>
               </div>
 
+            </div>
+          )}
+
+          {/* TAB: ESTOQUE E PRODUÇÃO */}
+          {activeTab === 'inventory' && (
+            <div className="max-w-6xl mx-auto space-y-6">
+              <div className="flex justify-between items-end mb-6">
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Gestão de Estoque e Produção</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mt-2">Simule produções, atualize o seu estoque de insumos e saiba exatamente o que precisa de comprar.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Simulador e Lista de Compras */}
+                <div className="lg:col-span-1 space-y-6">
+                  <div className="bg-amber-50 dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-amber-200 dark:border-gray-700 transition-colors">
+                    <h3 className="text-lg font-bold text-amber-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+                      <Cookie className="text-amber-600 dark:text-amber-500" size={20}/> Simulador de Produção
+                    </h3>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Quantas receitas base vai bater?</label>
+                    <div className="flex items-center gap-3 mb-4">
+                      <button onClick={() => setProductionBatches(Math.max(1, productionBatches - 1))} className="bg-white dark:bg-gray-900 border border-amber-200 dark:border-gray-600 w-10 h-10 rounded-xl flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-gray-700 transition">-</button>
+                      <input type="number" min="1" className="w-full h-10 text-center font-bold text-lg bg-white dark:bg-gray-900 border border-amber-200 dark:border-gray-600 rounded-xl text-gray-800 dark:text-gray-100 outline-none" value={productionBatches} onChange={e => setProductionBatches(Math.max(1, Number(e.target.value)))} />
+                      <button onClick={() => setProductionBatches(productionBatches + 1)} className="bg-white dark:bg-gray-900 border border-amber-200 dark:border-gray-600 w-10 h-10 rounded-xl flex items-center justify-center font-bold text-gray-700 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-gray-700 transition">+</button>
+                    </div>
+                    <div className="bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-amber-100 dark:border-gray-700 mb-6">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Rendimento Previsto:</p>
+                      <p className="text-lg font-black text-amber-700 dark:text-amber-500">{productionBatches * recipeConfig.yield} cookies</p>
+                    </div>
+
+                    {!inventoryCheck.canProduce && (
+                       <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl flex items-start gap-2">
+                         <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0"/>
+                         <div>
+                           <p className="text-xs font-bold text-red-800 dark:text-red-400">Faltam ingredientes!</p>
+                           <p className="text-[10px] text-red-600 dark:text-red-300 mt-0.5">Se registrar a produção, assumiremos que comprou o que falta e usou na hora.</p>
+                         </div>
+                       </div>
+                    )}
+
+                    <button onClick={handleProduce} className="w-full bg-amber-600 dark:bg-amber-700 text-white font-bold py-3 rounded-xl hover:bg-amber-700 dark:hover:bg-amber-600 transition-colors shadow-sm flex items-center justify-center gap-2">
+                      <CheckCircle size={18}/> Registrar Produção
+                    </button>
+                  </div>
+
+                  {inventoryCheck.totalMissingCost > 0 && (
+                    <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-red-100 dark:border-gray-700 transition-colors">
+                      <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
+                        <ShoppingCart className="text-red-500" size={20}/> Lista de Compras
+                      </h3>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Itens em falta para produzir {productionBatches} receita(s).</p>
+                      <div className="space-y-3 mb-4 max-h-[300px] overflow-y-auto pr-2">
+                        {inventoryCheck.list.filter(i => i.missing > 0).map(ing => (
+                          <div key={ing.id} className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0 last:pb-0">
+                             <div>
+                               <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{ing.name}</p>
+                               <p className="text-[10px] text-red-500 font-medium">Faltam: {ing.missing.toFixed(1)} {ing.unit}</p>
+                             </div>
+                             <p className="text-sm font-bold text-gray-700 dark:text-gray-300">R$ {ing.costToBuy.toFixed(2)}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                        <span className="font-bold text-gray-600 dark:text-gray-400 text-sm">Custo Estimado:</span>
+                        <span className="font-black text-red-600 dark:text-red-400 text-lg">R$ {inventoryCheck.totalMissingCost.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Estoque Atual */}
+                <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 overflow-hidden transition-colors flex flex-col">
+                  <div className="p-6 border-b border-amber-100 dark:border-gray-700 bg-amber-50/30 dark:bg-gray-900 flex justify-between items-center">
+                    <div>
+                      <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><Package className="text-amber-600 dark:text-amber-500" size={20} /> Controle de Estoque</h3>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">A sua lista de insumos. Edite as quantidades sempre que comprar material.</p>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto flex-1">
+                    <table className="w-full text-left border-collapse min-w-max">
+                      <thead>
+                        <tr className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 text-sm">
+                          <th className="p-4 font-semibold">Insumo</th>
+                          <th className="p-4 font-semibold text-center">Necessário p/ {productionBatches}x</th>
+                          <th className="p-4 font-semibold text-center">Em Estoque Atual</th>
+                          <th className="p-4 font-semibold text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {inventoryCheck.list.map(ing => {
+                          const isOk = ing.missing === 0;
+                          return (
+                            <tr key={ing.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
+                              <td className="p-4">
+                                <p className="font-bold text-gray-800 dark:text-gray-200">{ing.name}</p>
+                                {ing.isPowder && <p className="text-[10px] text-amber-600 dark:text-amber-400">+2% margem de quebra aplicada</p>}
+                              </td>
+                              <td className="p-4 text-center font-medium text-gray-600 dark:text-gray-300">
+                                {ing.totalNeeded.toFixed(1)} {ing.unit}
+                              </td>
+                              <td className="p-4 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <input 
+                                    type="number" min="0" step="any"
+                                    className={`w-24 p-2 text-center text-sm font-bold border rounded-lg outline-none transition-colors ${!isOk ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400 focus:ring-2 focus:ring-red-500' : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-amber-500'}`}
+                                    value={ing.currentStock || ''} 
+                                    onChange={e => handleUpdateStock(ing.id, e.target.value)} 
+                                    placeholder="0"
+                                  />
+                                  <span className="text-xs text-gray-500 dark:text-gray-400 w-6 text-left">{ing.unit}</span>
+                                </div>
+                              </td>
+                              <td className="p-4 text-center">
+                                {isOk ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"><CheckCircle size={12}/> Suficiente</span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Faltam {ing.missing.toFixed(1)}{ing.unit}</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1081,7 +1262,7 @@ export default function CookieDashboard() {
             <div className="max-w-6xl mx-auto space-y-6">
               <div className="flex justify-between items-end mb-6">
                 <div>
-                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Custos, Ficha e Planilha</h2>
+                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Custos & Ficha Técnica</h2>
                   <p className="text-gray-600 dark:text-gray-400 mt-2">Conecte sua planilha para gerar os custos em tempo real.</p>
                 </div>
               </div>
@@ -1106,41 +1287,39 @@ export default function CookieDashboard() {
               </div>
 
               {ingredients.length > 0 && (
-                <>
-                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
-                    <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Package size={16}/><h3 className="font-medium text-xs">Custo da Receita Base</h3></div>
-                        <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.totalRecipeCost.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Calculator size={16}/><h3 className="font-medium text-xs">Custo Unitário (Massa)</h3></div>
-                        <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.costPerCookie.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><DollarSign size={16} className="text-green-500"/><h3 className="font-medium text-xs text-green-700 dark:text-green-400">Lucro Médio Unitário</h3></div>
-                        <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {costMetrics.profit.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
-                        <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><TrendingUp size={16} className="text-purple-500"/><h3 className="font-medium text-xs text-purple-700 dark:text-purple-400">Margem (Produto Base)</h3></div>
-                        <p className="text-xl font-bold text-purple-600 dark:text-purple-400">{costMetrics.profitMargin.toFixed(1)}%</p>
-                      </div>
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
+                  <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
+                      <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Package size={16}/><h3 className="font-medium text-xs">Custo da Receita Base</h3></div>
+                      <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.totalRecipeCost.toFixed(2)}</p>
                     </div>
-                    <div className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl border border-amber-200 dark:border-gray-700 transition-colors">
-                      <h3 className="font-bold text-amber-900 dark:text-gray-200 mb-3 text-sm">Simulador de Custos</h3>
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <label className="text-xs font-medium text-amber-800 dark:text-gray-400">Rendimento (un):</label>
-                          <input type="number" className="w-16 p-1 text-center text-sm border border-amber-200 dark:border-gray-600 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 outline-none" value={recipeConfig.yield} onChange={(e) => setRecipeConfig({...recipeConfig, yield: Number(e.target.value) || 1})} />
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <label className="text-xs font-medium text-amber-800 dark:text-gray-400">Venda Base(R$):</label>
-                          <input type="number" step="0.5" className="w-20 p-1 text-center text-sm border border-amber-200 dark:border-gray-600 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 outline-none" value={recipeConfig.salePrice} onChange={(e) => setRecipeConfig({...recipeConfig, salePrice: Number(e.target.value) || 0})} />
-                        </div>
+                    <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
+                      <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Calculator size={16}/><h3 className="font-medium text-xs">Custo Unitário (Massa)</h3></div>
+                      <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.costPerCookie.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
+                      <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><DollarSign size={16} className="text-green-500"/><h3 className="font-medium text-xs text-green-700 dark:text-green-400">Lucro Médio Unitário</h3></div>
+                      <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {costMetrics.profit.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
+                      <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><TrendingUp size={16} className="text-purple-500"/><h3 className="font-medium text-xs text-purple-700 dark:text-purple-400">Margem (Produto Base)</h3></div>
+                      <p className="text-xl font-bold text-purple-600 dark:text-purple-400">{costMetrics.profitMargin.toFixed(1)}%</p>
+                    </div>
+                  </div>
+                  <div className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl border border-amber-200 dark:border-gray-700 transition-colors">
+                    <h3 className="font-bold text-amber-900 dark:text-gray-200 mb-3 text-sm">Simulador de Custos</h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-medium text-amber-800 dark:text-gray-400">Rendimento (un):</label>
+                        <input type="number" className="w-16 p-1 text-center text-sm border border-amber-200 dark:border-gray-600 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 outline-none" value={recipeConfig.yield} onChange={(e) => setRecipeConfig({...recipeConfig, yield: Number(e.target.value) || 1})} />
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-medium text-amber-800 dark:text-gray-400">Venda Base(R$):</label>
+                        <input type="number" step="0.5" className="w-20 p-1 text-center text-sm border border-amber-200 dark:border-gray-600 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 outline-none" value={recipeConfig.salePrice} onChange={(e) => setRecipeConfig({...recipeConfig, salePrice: Number(e.target.value) || 0})} />
                       </div>
                     </div>
                   </div>
-                </>
+                </div>
               )}
 
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 overflow-hidden transition-colors">
@@ -1408,6 +1587,51 @@ export default function CookieDashboard() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* MODAL DE HISTÓRICO DE VENDAS */}
+          {showSalesHistory && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-8">
+              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-900/50 transition-colors">
+                  <div>
+                    <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                      <History className="text-amber-600 dark:text-amber-500" /> Histórico Detalhado
+                    </h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registo completo de todas as vendas efetuadas.</p>
+                  </div>
+                  <button onClick={() => setShowSalesHistory(false)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 rounded-xl transition-colors"><X size={24} /></button>
+                </div>
+                
+                <div className="p-6 overflow-y-auto flex-1 bg-gray-50/30 dark:bg-gray-900/30 transition-colors">
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-amber-50 dark:bg-gray-900 text-amber-900 dark:text-amber-400 border-b border-amber-100 dark:border-gray-700">
+                          <th className="p-4 font-semibold">Data / Hora</th><th className="p-4 font-semibold">Cliente</th><th className="p-4 font-semibold text-center">Quantidade</th><th className="p-4 font-semibold text-right">Receita (R$)</th><th className="p-4 font-semibold text-right">Lucro Est. (R$)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sales.length === 0 ? (
+                          <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhuma venda registada ainda.</td></tr>
+                        ) : [...sales].sort((a,b) => new Date(b.date) - new Date(a.date)).map(sale => {
+                          const estProfit = sale.revenue - ((sale.cookieUnits || sale.quantity) * costMetrics.costPerCookie);
+                          return (
+                            <tr key={sale.id} className="border-b border-gray-50 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
+                              <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{new Date(sale.date).toLocaleDateString('pt-BR')} <br/><span className="text-xs text-gray-400 dark:text-gray-500">{new Date(sale.date).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}</span></td>
+                              <td className="p-4"><p className="font-medium text-gray-800 dark:text-gray-200">{sale.customerName || 'Cliente Balcão'}</p><p className="text-xs text-amber-600 dark:text-amber-400 font-medium">{sale.productName || 'Produto Avulso'}</p></td>
+                              <td className="p-4 text-center"><span className="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-400 px-2 py-1 rounded-lg text-xs font-bold">{sale.quantity} un.</span>{sale.cookieUnits > sale.quantity && <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">({sale.cookieUnits} cookies)</p>}</td>
+                              <td className="p-4 text-right font-medium text-gray-800 dark:text-gray-200">R$ {sale.revenue.toFixed(2)}</td>
+                              <td className="p-4 text-right font-bold text-green-600 dark:text-green-400">R$ {estProfit.toFixed(2)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           )}
