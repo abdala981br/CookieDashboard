@@ -75,6 +75,7 @@ export default function CookieDashboard() {
   const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); 
   const [sheetUrl, setSheetUrl] = useState('');
   const [lastSync, setLastSync] = useState(null);
+  const [isConfigLoaded, setIsConfigLoaded] = useState(false); // NOVO: Impede que o sistema apague a sua meta/link
 
   // Estados de interface (Formulários)
   const [batchDate, setBatchDate] = useState('');
@@ -152,8 +153,9 @@ export default function CookieDashboard() {
              if(data.recipeConfig) setRecipeConfig(data.recipeConfig);
              if(data.goals) setGoals(data.goals);
              if(data.lastSync) setLastSync(data.lastSync);
-             if(data.sheetUrl) setSheetUrl(data.sheetUrl);
+             if(data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
          }
+         setIsConfigLoaded(true); // O Firebase terminou de ler as configurações antigas!
       }, console.error)
     ];
     return () => unsubs.forEach(fn => fn());
@@ -163,8 +165,12 @@ export default function CookieDashboard() {
   const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
-  useEffect(() => { if (db && user) saveConfig({ recipeConfig, goals }); }, [recipeConfig, goals, user]);
-  useEffect(() => { if (db && user) saveConfig({ sheetUrl }); }, [sheetUrl, user]);
+  // NOVO: Apenas guarda as novas definições no Firebase se estas já tiverem sido lidas com sucesso no arranque
+  useEffect(() => { 
+    if (db && user && isConfigLoaded) {
+      saveConfig({ recipeConfig, goals, sheetUrl }); 
+    }
+  }, [recipeConfig, goals, sheetUrl, user, isConfigLoaded]);
 
   useEffect(() => {
     if (!quickSale.productId && products.length > 0) {
@@ -588,7 +594,7 @@ export default function CookieDashboard() {
          if (user) {
              ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
              parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
-             saveConfig({ lastSync: syncTime });
+             saveConfig({ lastSync: syncTime, sheetUrl });
          }
       } else { alert("Nenhum ingrediente encontrado. Verifique a planilha."); }
     } catch (error) {
@@ -717,7 +723,7 @@ export default function CookieDashboard() {
         <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
           <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
-            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral</button>
+            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral (BI)</button>
             <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo</button>
             <button onClick={() => setActiveTab('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'inventory' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ClipboardList size={20} /> Estoque & Produção</button>
             <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
@@ -783,24 +789,39 @@ export default function CookieDashboard() {
               <div>
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Visão Rápida (Total)</h3>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Faturamento</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Faturamento</p>
+                      <div className="bg-green-100 dark:bg-green-900/30 p-1.5 rounded-lg text-green-600 dark:text-green-400"><DollarSign size={16} /></div>
+                    </div>
                     <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {globalMetrics.totalRevenue.toFixed(2)}</p>
                   </div>
-                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Lucro Estimado</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Lucro Estimado</p>
+                      <div className="bg-emerald-100 dark:bg-emerald-900/30 p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400"><TrendingUp size={16} /></div>
+                    </div>
                     <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</p>
                   </div>
-                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Itens Vendidos</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Itens Vendidos</p>
+                      <div className="bg-amber-100 dark:bg-amber-900/30 p-1.5 rounded-lg text-amber-600 dark:text-amber-400"><Cookie size={16} /></div>
+                    </div>
                     <p className="text-xl font-bold text-amber-700 dark:text-amber-500">{globalMetrics.totalCookiesSold} un.</p>
                   </div>
-                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Nº Clientes</p>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Nº Clientes</p>
+                      <div className="bg-blue-100 dark:bg-blue-900/30 p-1.5 rounded-lg text-blue-600 dark:text-blue-400"><Users size={16} /></div>
+                    </div>
                     <p className="text-xl font-bold text-blue-600 dark:text-blue-400">{customers.length}</p>
                   </div>
-                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 col-span-2 md:col-span-1 bg-amber-50/50 dark:bg-gray-800/80">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">Ticket Médio</p>
+                  <div className="bg-amber-50 dark:bg-gray-800/80 p-5 rounded-2xl shadow-sm border border-amber-200 dark:border-amber-700/50 col-span-2 md:col-span-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs text-amber-800 dark:text-amber-200 font-medium">Ticket Médio</p>
+                      <div className="bg-white/60 dark:bg-gray-900/50 p-1.5 rounded-lg text-amber-700 dark:text-amber-400"><ShoppingCart size={16} /></div>
+                    </div>
                     <p className="text-xl font-bold text-amber-900 dark:text-amber-300">R$ {globalMetrics.ticketMedio.toFixed(2)}</p>
                   </div>
                 </div>
