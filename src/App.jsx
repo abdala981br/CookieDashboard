@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-// IMPORTAÇÕES DO FIREBASE
+// IMPORTAÇÕES DO FIREBASE (Agora com Email/Senha)
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 // IMPORTAÇÕES DOS ÍCONES
@@ -11,7 +11,7 @@ import {
   CheckCircle, Clock, XCircle, Calculator, DollarSign, TrendingUp,
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
-  AlertCircle, Moon, Sun
+  AlertCircle, Moon, Sun, LogOut, Lock, Mail
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -43,9 +43,18 @@ export default function CookieDashboard() {
   const [darkMode, setDarkMode] = useState(false);
   
   // ==========================================
-  // ESTADOS COM FIREBASE (BANCO DE DADOS REAL)
+  // ESTADOS DE AUTENTICAÇÃO E LOGIN
   // ==========================================
   const [user, setUser] = useState(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [authMode, setAuthMode] = useState('login'); // 'login' ou 'register'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // ==========================================
+  // ESTADOS COM FIREBASE (BANCO DE DADOS REAL)
+  // ==========================================
   const [customers, setCustomers] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -70,21 +79,48 @@ export default function CookieDashboard() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
 
-  // --- 1. AUTENTICAÇÃO ANÓNIMA PARA O FIREBASE ---
+  // --- 1. MONITORIZAR AUTENTICAÇÃO ---
   useEffect(() => {
     if (!auth) return;
-    const initAuth = async () => {
-      try { await signInAnonymously(auth); } catch(e) { console.error("Erro no Auth:", e); }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoadingAuth(false);
+    });
     return () => unsubscribe();
   }, []);
 
-  // --- 2. LER DADOS EM TEMPO REAL ---
+  // --- FUNÇÕES DE LOGIN/REGISTO ---
+  const handleAuthenticate = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      if (authMode === 'login') {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
+    } catch (error) {
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        setAuthError('Email ou senha incorretos.');
+      } else if (error.code === 'auth/email-already-in-use') {
+        setAuthError('Este email já está cadastrado. Tente fazer Login.');
+      } else if (error.code === 'auth/weak-password') {
+        setAuthError('A senha deve ter pelo menos 6 caracteres.');
+      } else {
+        setAuthError('Erro na autenticação: ' + error.message);
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    signOut(auth);
+  };
+
+  // --- 2. LER DADOS EM TEMPO REAL DA PASTA PRIVADA DO USUÁRIO ---
   useEffect(() => {
     if (!db || !user) return;
     const uid = user.uid;
+    // Agora salvamos na pasta específica deste usuário logado
     const baseArgs = ['artifacts', appId, 'users', uid];
 
     const unsubs = [
@@ -109,7 +145,7 @@ export default function CookieDashboard() {
     return () => unsubs.forEach(fn => fn());
   }, [user]);
 
-  // --- 3. FUNÇÕES PARA GUARDAR NO BANCO ---
+  // --- 3. FUNÇÕES PARA GUARDAR NO BANCO (NA PASTA PRIVADA) ---
   const saveToDb = async (col, id, data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id), data); };
   const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
@@ -202,7 +238,6 @@ export default function CookieDashboard() {
       revenue += r.expectedRevenue || 0;
       cookies += r.cookieUnits || r.quantity || 0;
     });
-    // Calcula as fornadas necessarias baseado no rendimento atual da receita
     const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
     return { revenue, cookies, batchesNeeded };
   }, [pendingReservationsList, recipeConfig.yield]);
@@ -238,9 +273,8 @@ export default function CookieDashboard() {
 
 
   // ==========================================
-  // HANDLERS (AÇÕES) 100% LIGADOS AO FIREBASE
+  // HANDLERS (AÇÕES)
   // ==========================================
-  
   const handleQuickSale = (e) => {
     e.preventDefault();
     if (!quickSale.customerName || !user) return;
@@ -249,7 +283,6 @@ export default function CookieDashboard() {
     const productName = selectedProduct ? selectedProduct.name : 'Avulso';
     const cookieUnits = selectedProduct ? (selectedProduct.units || 1) * Number(quickSale.quantity) : Number(quickSale.quantity);
 
-    // 1. Regista a Venda no Banco
     const newSaleId = Math.random().toString(36).substr(2, 9);
     const newSaleObj = {
       id: newSaleId,
@@ -262,7 +295,6 @@ export default function CookieDashboard() {
     };
     saveToDb('sales', newSaleId, newSaleObj);
 
-    // 2. Atualiza ou Cria o Cliente no Banco
     const existingCustomer = customers.find(c => c.name.toLowerCase() === quickSale.customerName.toLowerCase().trim());
     if (existingCustomer) {
       saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
@@ -276,7 +308,6 @@ export default function CookieDashboard() {
       });
     }
 
-    // Limpa formulário
     setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice });
   };
 
@@ -294,11 +325,8 @@ export default function CookieDashboard() {
     setNewProduct({ name: '', price: '', type: 'single', units: 2 });
   };
 
-  const handleDeleteProduct = (id) => {
-    if(user) deleteFromDb('products', id);
-  };
+  const handleDeleteProduct = (id) => { if(user) deleteFromDb('products', id); };
 
-  // Lógica da Planilha com Salvamento na Nuvem
   const handleSyncSheet = async () => {
     if (!sheetUrl) { alert("Por favor, cole o link da sua planilha."); return; }
     setIsSyncing(true);
@@ -358,11 +386,10 @@ export default function CookieDashboard() {
       }
 
       if (parsedIngredients.length > 0) {
-         setIngredients(parsedIngredients); // Salva local provisoriamente
+         setIngredients(parsedIngredients);
          const syncTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
          setLastSync(syncTime);
 
-         // Tenta Guardar no Banco
          if (user) {
              ingredients.forEach(ing => deleteFromDb('ingredients', ing.id));
              parsedIngredients.forEach(ing => saveToDb('ingredients', ing.id, ing));
@@ -503,6 +530,93 @@ export default function CookieDashboard() {
     );
   };
 
+  // ==========================================
+  // RENDERIZAÇÕES PRINCIPAIS (TELA DE LOGIN E DASHBOARD)
+  // ==========================================
+
+  // 1. TELA DE CARREGAMENTO (Verificando se já está logado)
+  if (loadingAuth) {
+    return (
+      <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex flex-col items-center justify-center p-4">
+        <Cookie className="text-amber-500 animate-spin mb-4" size={48} />
+        <p className="text-amber-800 dark:text-amber-400 font-medium">A carregar os seus cookies docinhos...</p>
+      </div>
+    );
+  }
+
+  // 2. TELA DE LOGIN / REGISTO
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex items-center justify-center p-4 transition-colors">
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border border-amber-100 dark:border-gray-700 w-full max-w-md">
+          <div className="flex justify-center mb-6">
+            <div className="bg-amber-100 dark:bg-amber-900/50 p-4 rounded-full text-amber-600 dark:text-amber-400">
+              <Cookie size={40} />
+            </div>
+          </div>
+          <h1 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100 mb-2">Bem-vindo ao CookieDash</h1>
+          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">
+            {authMode === 'login' ? 'Entre na sua conta para aceder ao painel.' : 'Crie a sua conta de administrador.'}
+          </p>
+
+          {authError && (
+            <div className="mb-6 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">
+              {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleAuthenticate} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="email" 
+                  required 
+                  className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" 
+                  placeholder="seu@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Senha</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="password" 
+                  required 
+                  className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" 
+                  placeholder="Mínimo de 6 caracteres"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+            
+            <button type="submit" className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-colors mt-4 shadow-md">
+              {authMode === 'login' ? 'Entrar no Dashboard' : 'Criar Conta e Entrar'}
+            </button>
+          </form>
+
+          <div className="mt-8 text-center border-t border-gray-100 dark:border-gray-700 pt-6">
+            <p className="text-gray-600 dark:text-gray-400 text-sm">
+              {authMode === 'login' ? 'Ainda não tem conta?' : 'Já tem uma conta?'}
+              <button 
+                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+                className="ml-2 font-bold text-amber-600 dark:text-amber-500 hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
+              >
+                {authMode === 'login' ? 'Registe-se aqui' : 'Faça Login'}
+              </button>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. DASHBOARD PRINCIPAL (Só renderiza se `user` existir)
   const rootCustomers = customers.filter(c => !c.referredBy);
   const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10); 
   const singleProducts = products.filter(p => p.type === 'single' || !p.type);
@@ -519,7 +633,7 @@ export default function CookieDashboard() {
             <h1 className="text-2xl font-bold tracking-tight">CookieDash</h1>
           </div>
           
-          <nav className="flex-1 px-4 space-y-2 mt-4">
+          <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
             <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}>
               <BarChart3 size={20} /> Visão Geral
             </button>
@@ -543,14 +657,25 @@ export default function CookieDashboard() {
             </button>
           </nav>
 
-          {/* Botão de Tema */}
-          <button 
-            onClick={() => setDarkMode(!darkMode)} 
-            className="mt-auto mb-6 mx-4 flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors hover:bg-amber-800/50 dark:hover:bg-gray-800 text-amber-200 dark:text-gray-400 hover:text-white border border-amber-800 dark:border-gray-800"
-          >
-            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-            <span className="font-medium text-sm">{darkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
-          </button>
+          <div className="mt-auto px-4 pb-6 space-y-2">
+            {/* Botão de Tema */}
+            <button 
+              onClick={() => setDarkMode(!darkMode)} 
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors hover:bg-amber-800/50 dark:hover:bg-gray-800 text-amber-200 dark:text-gray-400 hover:text-white border border-amber-800 dark:border-gray-800"
+            >
+              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+              <span className="font-medium text-sm">{darkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
+            </button>
+
+            {/* Botão de Sair/Logout */}
+            <button 
+              onClick={handleLogout} 
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors bg-red-900/40 hover:bg-red-800/60 text-red-200 hover:text-white border border-red-800/50"
+            >
+              <LogOut size={18} />
+              <span className="font-medium text-sm">Sair da Conta</span>
+            </button>
+          </div>
         </aside>
 
         {/* Main Content */}
