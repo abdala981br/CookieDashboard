@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-// IMPORTAÇÕES DO FIREBASE (Agora com Email/Senha)
+// IMPORTAÇÕES DO FIREBASE (Agora com Email/Senha e Recuperação de Senha)
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 // IMPORTAÇÕES DOS ÍCONES
@@ -51,6 +51,7 @@ export default function CookieDashboard() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
 
   // ==========================================
   // ESTADOS COM FIREBASE (BANCO DE DADOS REAL)
@@ -93,6 +94,7 @@ export default function CookieDashboard() {
   const handleAuthenticate = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setResetMessage('');
     try {
       if (authMode === 'login') {
         await signInWithEmailAndPassword(auth, email, password);
@@ -109,6 +111,26 @@ export default function CookieDashboard() {
       } else {
         setAuthError('Erro na autenticação: ' + error.message);
       }
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!email) {
+      setAuthError('Por favor, digite o seu email no campo acima para recuperar a senha.');
+      setResetMessage('');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetMessage('Email de recuperação enviado! Verifique a sua caixa de entrada.');
+      setAuthError('');
+    } catch (error) {
+      if (error.code === 'auth/user-not-found') {
+        setAuthError('Não encontrámos nenhuma conta com este email.');
+      } else {
+        setAuthError('Erro ao tentar enviar o email: ' + error.message);
+      }
+      setResetMessage('');
     }
   };
 
@@ -560,8 +582,14 @@ export default function CookieDashboard() {
           </p>
 
           {authError && (
-            <div className="mb-6 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">
               {authError}
+            </div>
+          )}
+          
+          {resetMessage && (
+            <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl text-green-600 dark:text-green-400 text-sm font-medium text-center">
+              {resetMessage}
             </div>
           )}
 
@@ -593,6 +621,13 @@ export default function CookieDashboard() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
+              {authMode === 'login' && (
+                <div className="text-right mt-2">
+                  <button type="button" onClick={handleResetPassword} className="text-xs text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400 font-medium transition-colors">
+                    Esqueci a minha senha
+                  </button>
+                </div>
+              )}
             </div>
             
             <button type="submit" className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-colors mt-4 shadow-md">
@@ -604,7 +639,7 @@ export default function CookieDashboard() {
             <p className="text-gray-600 dark:text-gray-400 text-sm">
               {authMode === 'login' ? 'Ainda não tem conta?' : 'Já tem uma conta?'}
               <button 
-                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); setResetMessage(''); }}
                 className="ml-2 font-bold text-amber-600 dark:text-amber-500 hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
               >
                 {authMode === 'login' ? 'Registe-se aqui' : 'Faça Login'}
