@@ -75,7 +75,7 @@ export default function CookieDashboard() {
   const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); 
   const [sheetUrl, setSheetUrl] = useState('');
   const [lastSync, setLastSync] = useState(null);
-  const [isConfigLoaded, setIsConfigLoaded] = useState(false); // NOVO: Impede que o sistema apague a sua meta/link
+  const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
   // Estados de interface (Formulários)
   const [batchDate, setBatchDate] = useState('');
@@ -155,7 +155,7 @@ export default function CookieDashboard() {
              if(data.lastSync) setLastSync(data.lastSync);
              if(data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
          }
-         setIsConfigLoaded(true); // O Firebase terminou de ler as configurações antigas!
+         setIsConfigLoaded(true);
       }, console.error)
     ];
     return () => unsubs.forEach(fn => fn());
@@ -165,11 +165,8 @@ export default function CookieDashboard() {
   const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
-  // NOVO: Apenas guarda as novas definições no Firebase se estas já tiverem sido lidas com sucesso no arranque
   useEffect(() => { 
-    if (db && user && isConfigLoaded) {
-      saveConfig({ recipeConfig, goals, sheetUrl }); 
-    }
+    if (db && user && isConfigLoaded) { saveConfig({ recipeConfig, goals, sheetUrl }); }
   }, [recipeConfig, goals, sheetUrl, user, isConfigLoaded]);
 
   useEffect(() => {
@@ -194,20 +191,57 @@ export default function CookieDashboard() {
     return { totalRecipeCost, costPerCookie, profit, profitMargin };
   }, [ingredients, recipeConfig]);
 
+  // --- CÁLCULOS DE ESTOQUE E PRODUÇÃO ---
+  const inventoryCheck = useMemo(() => {
+    const list = ingredients.map(ing => {
+      const wasteFactor = ing.applyWaste ? 1.02 : 1; 
+      const totalNeeded = (ing.recipeQty * wasteFactor) * productionBatches;
+      const currentStock = parseFloat(ing.currentStock) || 0;
+      const missingAmount = Math.max(0, totalNeeded - currentStock);
+      
+      let packagesToBuy = 0;
+      let costToBuy = 0;
+      let exactMissingToBuy = 0;
+
+      if (missingAmount > 0 && ing.bulkQty > 0) {
+          packagesToBuy = Math.ceil(missingAmount / ing.bulkQty);
+          costToBuy = packagesToBuy * ing.bulkPrice;
+          exactMissingToBuy = packagesToBuy * ing.bulkQty;
+      }
+
+      return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, wasteFactor };
+    });
+    const totalMissingCost = list.reduce((sum, item) => sum + item.costToBuy, 0);
+    const canProduce = list.every(item => item.missingAmount === 0);
+    return { list, totalMissingCost, canProduce };
+  }, [ingredients, productionBatches]);
+
+  // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje (Comprando pacotes inteiros)
+  const missingCostForOneBatch = useMemo(() => {
+    return ingredients.reduce((sum, ing) => {
+      const wasteFactor = ing.applyWaste ? 1.02 : 1; 
+      const totalNeeded = (ing.recipeQty * wasteFactor) * 1; 
+      const currentStock = parseFloat(ing.currentStock) || 0;
+      const missingAmount = Math.max(0, totalNeeded - currentStock);
+      let costToBuy = 0;
+      if (missingAmount > 0 && ing.bulkQty > 0) {
+          costToBuy = Math.ceil(missingAmount / ing.bulkQty) * ing.bulkPrice;
+      }
+      return sum + costToBuy;
+    }, 0);
+  }, [ingredients]);
+
   // --- 🧠 MÓDULO INTELIGÊNCIA DE NEGÓCIO (BI) ---
   
-  // 1. Métricas Globais (Visão Rápida)
   const globalMetrics = useMemo(() => {
     const totalRevenue = sales.reduce((acc, curr) => acc + curr.revenue, 0);
     const totalCookiesSold = sales.reduce((acc, curr) => acc + (curr.cookieUnits || curr.quantity), 0);
     const totalEstimatedCost = totalCookiesSold * costMetrics.costPerCookie;
     const totalEstimatedProfit = totalRevenue - totalEstimatedCost;
-    const ticketMedio = sales.length > 0 ? (totalRevenue / sales.length) : 0;
-    const margin = totalRevenue > 0 ? (totalEstimatedProfit / totalRevenue) * 100 : 0;
-    return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit, ticketMedio, margin };
+    return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit };
   }, [sales, costMetrics]);
 
-  // 2. Desempenho no Tempo (Hoje vs Ontem, Semana vs Semana Passada)
+  // 2. Desempenho no Tempo
   const timeStats = useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -220,11 +254,14 @@ export default function CookieDashboard() {
     sales.forEach(s => {
       if (!s.date) return;
       const d = new Date(s.date);
-      if (d >= today) revToday += s.revenue;
-      else if (d >= yesterday && d < today) revYesterday += s.revenue;
+      // Ignora timezone para comparação simples
+      const localD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       
-      if (d >= last7Days) rev7Days += s.revenue;
-      else if (d >= previous7Days && d < last7Days) revPrev7Days += s.revenue;
+      if (localD.getTime() === today.getTime()) revToday += s.revenue;
+      else if (localD.getTime() === yesterday.getTime()) revYesterday += s.revenue;
+      
+      if (localD >= last7Days && localD <= today) rev7Days += s.revenue;
+      else if (localD >= previous7Days && localD < last7Days) revPrev7Days += s.revenue;
     });
 
     const todayGrowth = revYesterday === 0 ? (revToday > 0 ? 100 : 0) : ((revToday - revYesterday) / revYesterday) * 100;
@@ -232,6 +269,41 @@ export default function CookieDashboard() {
 
     return { revToday, revYesterday, todayGrowth, rev7Days, revPrev7Days, weekGrowth };
   }, [sales]);
+
+  // Gráfico de Histórico
+  const weeklyStats = useMemo(() => {
+    const stats = [];
+    const today = new Date();
+    const currentDay = today.getDay();
+    const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+    
+    const currentMonday = new Date(today);
+    currentMonday.setDate(today.getDate() + diffToMonday);
+    currentMonday.setHours(0,0,0,0);
+
+    for(let i=5; i>=0; i--) {
+      const start = new Date(currentMonday);
+      start.setDate(currentMonday.getDate() - (i * 7));
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23,59,59,999);
+      
+      const format = (dt) => `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth()+1).padStart(2, '0')}`;
+      stats.push({ label: `${format(start)} a \n${format(end)}`, start, end, salesQty: 0, revenue: 0, estimatedProfit: 0 });
+    }
+
+    sales.forEach(sale => {
+      if (!sale.date) return;
+      const saleDate = new Date(sale.date);
+      const week = stats.find(w => saleDate >= w.start && saleDate <= w.end);
+      if (week) {
+        week.salesQty += (sale.cookieUnits || sale.quantity);
+        week.revenue += sale.revenue;
+        week.estimatedProfit += (sale.revenue - (costMetrics.costPerCookie * (sale.cookieUnits || sale.quantity)));
+      }
+    });
+    return stats;
+  }, [sales, costMetrics]);
 
   // 3. Inteligência de Produto & Cliente
   const productIntel = useMemo(() => {
@@ -279,49 +351,6 @@ export default function CookieDashboard() {
     const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
     return { revenue, cookies, batchesNeeded };
   }, [pendingReservationsList, recipeConfig.yield]);
-
-  // --- CÁLCULOS DE ESTOQUE E PRODUÇÃO ---
-  const inventoryCheck = useMemo(() => {
-    const list = ingredients.map(ing => {
-      const wasteFactor = ing.applyWaste ? 1.02 : 1; 
-      const totalNeeded = (ing.recipeQty * wasteFactor) * productionBatches;
-      const currentStock = parseFloat(ing.currentStock) || 0;
-      const missingAmount = Math.max(0, totalNeeded - currentStock);
-      
-      let packagesToBuy = 0;
-      let costToBuy = 0;
-      let exactMissingToBuy = 0;
-
-      if (missingAmount > 0 && ing.bulkQty > 0) {
-          // Arredonda para 3 casas decimais para evitar bugs do JS forçando pacotes extras
-          const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
-          packagesToBuy = Math.ceil(safeMissingAmount / ing.bulkQty);
-          costToBuy = packagesToBuy * ing.bulkPrice;
-          exactMissingToBuy = packagesToBuy * ing.bulkQty;
-      }
-
-      return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, wasteFactor };
-    });
-    const totalMissingCost = list.reduce((sum, item) => sum + item.costToBuy, 0);
-    const canProduce = list.every(item => item.missingAmount === 0);
-    return { list, totalMissingCost, canProduce };
-  }, [ingredients, productionBatches]);
-
-  // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje (Comprando pacotes inteiros)
-  const missingCostForOneBatch = useMemo(() => {
-    return ingredients.reduce((sum, ing) => {
-      const wasteFactor = ing.applyWaste ? 1.02 : 1; 
-      const totalNeeded = (ing.recipeQty * wasteFactor) * 1; 
-      const currentStock = parseFloat(ing.currentStock) || 0;
-      const missingAmount = Math.max(0, totalNeeded - currentStock);
-      let costToBuy = 0;
-      if (missingAmount > 0 && ing.bulkQty > 0) {
-          const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
-          costToBuy = Math.ceil(safeMissingAmount / ing.bulkQty) * ing.bulkPrice;
-      }
-      return sum + costToBuy;
-    }, 0);
-  }, [ingredients]);
 
   const handleUpdateStock = (id, val) => {
     const newStock = parseFloat(val) || 0;
@@ -374,39 +403,6 @@ export default function CookieDashboard() {
   }, [customersWithStats, customerSortBy]);
 
   const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
-
-  const weeklyStats = useMemo(() => {
-    const stats = [];
-    const today = new Date();
-    const currentDay = today.getDay();
-    const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-    const currentMonday = new Date(today);
-    currentMonday.setDate(today.getDate() + diffToMonday);
-    currentMonday.setHours(0,0,0,0);
-
-    for(let i=5; i>=0; i--) {
-      const start = new Date(currentMonday);
-      start.setDate(currentMonday.getDate() - (i * 7));
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
-      end.setHours(23,59,59,999);
-      const format = (dt) => `${dt.getDate().toString().padStart(2, '0')}/${(dt.getMonth()+1).toString().padStart(2, '0')}`;
-      stats.push({ label: `${format(start)} a \n${format(end)}`, start, end, salesQty: 0, revenue: 0, estimatedProfit: 0 });
-    }
-
-    sales.forEach(sale => {
-      if (!sale.date) return;
-      const saleDate = new Date(sale.date);
-      const week = stats.find(w => saleDate >= w.start && saleDate <= w.end);
-      if (week) {
-        week.salesQty += (sale.cookieUnits || sale.quantity);
-        week.revenue += sale.revenue;
-        week.estimatedProfit += (sale.revenue - (costMetrics.costPerCookie * (sale.cookieUnits || sale.quantity)));
-      }
-    });
-    return stats;
-  }, [sales, costMetrics]);
-
   const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10);
   const rootCustomers = customers.filter(c => !c.referredBy);
 
@@ -578,7 +574,6 @@ export default function CookieDashboard() {
           const existingItem = ingredients.find(old => old.name.toLowerCase() === name.toLowerCase());
           const currentStock = existingItem ? (existingItem.currentStock || 0) : 0;
           
-          // LÓGICA DE QUEBRA (Desperdício) - Preenche como true por defeito para pós, a menos que o utilizador já tenha alterado.
           const unitLower = (clean(row[unitIdx]) || 'un').toLowerCase();
           const defaultWaste = (unitLower === 'g' || unitLower === 'kg' || unitLower === 'ml' || unitLower === 'l');
           const applyWaste = existingItem && existingItem.applyWaste !== undefined ? existingItem.applyWaste : defaultWaste;
@@ -723,7 +718,7 @@ export default function CookieDashboard() {
         <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
           <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
-            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral (BI)</button>
+            <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral</button>
             <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo</button>
             <button onClick={() => setActiveTab('inventory')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'inventory' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ClipboardList size={20} /> Estoque & Produção</button>
             <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
@@ -798,10 +793,17 @@ export default function CookieDashboard() {
                   </div>
                   <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
                     <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Lucro Estimado</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Lucro Real</p>
                       <div className="bg-emerald-100 dark:bg-emerald-900/30 p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400"><TrendingUp size={16} /></div>
                     </div>
                     <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs text-amber-700 dark:text-amber-400 font-medium" title="Quanto você gastaria no mercado agora para bater +1 receita">Custo Reposição (+1)</p>
+                      <div className="bg-red-100 dark:bg-red-900/30 p-1.5 rounded-lg text-red-600 dark:text-red-400"><ShoppingCart size={16} /></div>
+                    </div>
+                    <p className="text-xl font-bold text-red-600 dark:text-red-400">R$ {missingCostForOneBatch.toFixed(2)}</p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
                     <div className="flex justify-between items-start mb-2">
@@ -810,19 +812,12 @@ export default function CookieDashboard() {
                     </div>
                     <p className="text-xl font-bold text-amber-700 dark:text-amber-500">{globalMetrics.totalCookiesSold} un.</p>
                   </div>
-                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                  <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 col-span-2 md:col-span-1 bg-amber-50/50 dark:bg-gray-800/80 flex flex-col justify-between">
                     <div className="flex justify-between items-start mb-2">
                       <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Nº Clientes</p>
                       <div className="bg-blue-100 dark:bg-blue-900/30 p-1.5 rounded-lg text-blue-600 dark:text-blue-400"><Users size={16} /></div>
                     </div>
                     <p className="text-xl font-bold text-blue-600 dark:text-blue-400">{customers.length}</p>
-                  </div>
-                  <div className="bg-amber-50 dark:bg-gray-800/80 p-5 rounded-2xl shadow-sm border border-amber-200 dark:border-amber-700/50 col-span-2 md:col-span-1 flex flex-col justify-between">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-amber-800 dark:text-amber-200 font-medium">Ticket Médio</p>
-                      <div className="bg-white/60 dark:bg-gray-900/50 p-1.5 rounded-lg text-amber-700 dark:text-amber-400"><ShoppingCart size={16} /></div>
-                    </div>
-                    <p className="text-xl font-bold text-amber-900 dark:text-amber-300">R$ {globalMetrics.ticketMedio.toFixed(2)}</p>
                   </div>
                 </div>
               </div>
@@ -1070,7 +1065,6 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
-                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1083,12 +1077,11 @@ export default function CookieDashboard() {
                       const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
                       return (
                         <div key={index} className="flex flex-col items-center flex-1 group z-10 h-[200px] justify-end">
-                          {/* GRÁFICO DE BARRAS DUPLAS LADO A LADO */}
                           <div className="w-full relative h-[180px] flex items-end justify-center gap-1 sm:gap-2">
                             
-                            <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%`, minHeight: data.revenue > 0 ? '4px' : '0' }}></div>
+                            <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%`, minHeight: data.revenue > 0 ? '8px' : '0' }}></div>
                             
-                            <div className="w-3 sm:w-5 bg-green-500 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-400 transition-all duration-300 shadow-[0_-1px_3px_rgba(0,0,0,0.1)] dark:shadow-none" style={{ height: `${profitHeight}%`, minHeight: data.estimatedProfit > 0 ? '4px' : '0' }}></div>
+                            <div className="w-3 sm:w-5 bg-green-500 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-400 transition-all duration-300 shadow-[0_-1px_3px_rgba(0,0,0,0.1)] dark:shadow-none" style={{ height: `${profitHeight}%`, minHeight: data.estimatedProfit > 0 ? '8px' : '0' }}></div>
                             
                             {data.revenue > 0 && (
                               <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-gray-800 dark:bg-white text-white dark:text-gray-900 text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
@@ -1162,14 +1155,14 @@ export default function CookieDashboard() {
                           <div key={ing.id} className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0 last:pb-0">
                              <div>
                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{ing.name}</p>
-                               <p className="text-[10px] text-red-500 font-medium">Comprar: {ing.packagesToBuy} pct(s) ({ing.exactMissingToBuy}{ing.unit})</p>
+                               <p className="text-[10px] text-red-500 font-medium">Comprar: {ing.packagesToBuy} pct(s) de {ing.bulkQty}{ing.unit}</p>
                              </div>
                              <p className="text-sm font-bold text-gray-700 dark:text-gray-300">R$ {ing.costToBuy.toFixed(2)}</p>
                           </div>
                         ))}
                       </div>
                       <div className="pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                        <span className="font-bold text-gray-600 dark:text-gray-400 text-sm">Custo de Ida ao Mercado:</span>
+                        <span className="font-bold text-gray-600 dark:text-gray-400 text-sm">Custo Ida ao Mercado:</span>
                         <span className="font-black text-red-600 dark:text-red-400 text-lg">R$ {inventoryCheck.totalMissingCost.toFixed(2)}</span>
                       </div>
                     </div>
@@ -1713,7 +1706,7 @@ export default function CookieDashboard() {
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
-                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Prod (+1)</span>
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Reposição</span>
                  <span className="font-black text-red-400">-R$ {missingCostForOneBatch.toFixed(2)}</span>
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
