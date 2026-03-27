@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 // IMPORTAÇÕES DO FIREBASE
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+// Adicionada a importação do initializeFirestore para forçar a ligação segura
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, initializeFirestore } from 'firebase/firestore';
 
 // IMPORTAÇÕES DOS ÍCONES
 import { 
@@ -22,8 +23,8 @@ const firebaseConfig = {
   projectId: "cookiedash",
   storageBucket: "cookiedash.firebasestorage.app",
   messagingSenderId: "165689377990",
-  appId: "1:165689377990:web:266b6edaed2a8aee48c3c7",
-  measurementId: "G-PFR7GKRLZ2"
+  appId: "1:165689377990:web:266b6edaed2a8aee48c3c7"
+  // measurementId removido para evitar bloqueios do Opera/AdBlockers
 };
 
 // --- LIGANDO O MOTOR DO FIREBASE ---
@@ -32,7 +33,8 @@ const appId = 'cookie-dash-app';
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  db = getFirestore(app);
+  // 🔥 SOLUÇÃO OPERA: Força Long Polling para contornar o bloqueio de WebSockets do navegador
+  db = initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch (e) { console.error("Erro ao iniciar Firebase:", e); }
 
 const INITIAL_PRODUCTS = [
@@ -204,7 +206,8 @@ export default function CookieDashboard() {
       let exactMissingToBuy = 0;
 
       if (missingAmount > 0 && ing.bulkQty > 0) {
-          packagesToBuy = Math.ceil(missingAmount / ing.bulkQty);
+          const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
+          packagesToBuy = Math.ceil(safeMissingAmount / ing.bulkQty);
           costToBuy = packagesToBuy * ing.bulkPrice;
           exactMissingToBuy = packagesToBuy * ing.bulkQty;
       }
@@ -225,7 +228,8 @@ export default function CookieDashboard() {
       const missingAmount = Math.max(0, totalNeeded - currentStock);
       let costToBuy = 0;
       if (missingAmount > 0 && ing.bulkQty > 0) {
-          costToBuy = Math.ceil(missingAmount / ing.bulkQty) * ing.bulkPrice;
+          const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
+          costToBuy = Math.ceil(safeMissingAmount / ing.bulkQty) * ing.bulkPrice;
       }
       return sum + costToBuy;
     }, 0);
@@ -374,6 +378,7 @@ export default function CookieDashboard() {
       }
     });
     setProductionBatches(1);
+    alert("Produção registada com sucesso! O estoque foi deduzido.");
   };
 
   // --- CÁLCULOS DE CLIENTES ---
@@ -411,15 +416,17 @@ export default function CookieDashboard() {
   // ==========================================
   
   const handleAddToCartQuickSale = () => {
+    if (!quickSale.quantity || !quickSale.revenue) return;
     const p = products.find(prod => prod.id === quickSale.productId);
-    if (!p) return;
+    
     setQuickSaleCart([...quickSaleCart, {
-      productId: p.id, productName: p.name,
+      productId: p ? p.id : 'avulso', 
+      productName: p ? p.name : 'Produto Avulso',
       quantity: Number(quickSale.quantity),
-      cookieUnits: (p.units || 1) * Number(quickSale.quantity),
+      cookieUnits: (p?.units || 1) * Number(quickSale.quantity),
       revenue: Number(quickSale.revenue)
     }]);
-    setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p.price }));
+    setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p ? p.price : recipeConfig.salePrice }));
   };
 
   const handleFinalizeQuickSale = (e) => {
@@ -429,9 +436,12 @@ export default function CookieDashboard() {
     let finalCart = [...quickSaleCart];
     if (quickSale.quantity > 0 && quickSale.revenue > 0) {
       const p = products.find(prod => prod.id === quickSale.productId);
-      if (p) finalCart.push({
-        productId: p.id, productName: p.name,
-        quantity: Number(quickSale.quantity), cookieUnits: (p.units || 1) * Number(quickSale.quantity), revenue: Number(quickSale.revenue)
+      finalCart.push({
+        productId: p ? p.id : 'avulso', 
+        productName: p ? p.name : 'Produto Avulso',
+        quantity: Number(quickSale.quantity), 
+        cookieUnits: (p?.units || 1) * Number(quickSale.quantity), 
+        revenue: Number(quickSale.revenue)
       });
     }
     if (finalCart.length === 0) return;
@@ -462,11 +472,15 @@ export default function CookieDashboard() {
   };
 
   const handleAddToCartReservation = () => {
+    if (!newReservation.quantity) return;
     const p = products.find(prod => prod.id === newReservation.productId);
-    if (!p) return;
+    
     setReservationCart([...reservationCart, {
-      productId: p.id, productName: p.name, quantity: Number(newReservation.quantity),
-      cookieUnits: (p.units || 1) * Number(newReservation.quantity), expectedRevenue: p.price * Number(newReservation.quantity)
+      productId: p ? p.id : 'avulso', 
+      productName: p ? p.name : 'Produto Avulso', 
+      quantity: Number(newReservation.quantity),
+      cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
+      expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity)
     }]);
     setNewReservation(prev => ({ ...prev, quantity: 1 }));
   };
@@ -478,9 +492,12 @@ export default function CookieDashboard() {
     let finalCart = [...reservationCart];
     if (newReservation.quantity > 0) {
       const p = products.find(prod => prod.id === newReservation.productId);
-      if (p) finalCart.push({
-        productId: p.id, productName: p.name, quantity: Number(newReservation.quantity),
-        cookieUnits: (p.units || 1) * Number(newReservation.quantity), expectedRevenue: p.price * Number(newReservation.quantity)
+      finalCart.push({
+        productId: p ? p.id : 'avulso', 
+        productName: p ? p.name : 'Produto Avulso', 
+        quantity: Number(newReservation.quantity),
+        cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
+        expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity)
       });
     }
     if (finalCart.length === 0) return;
@@ -860,10 +877,10 @@ export default function CookieDashboard() {
                            <p className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Target size={16} className="text-amber-500"/> Meta Diária</p>
                            <p className="text-xs text-gray-400 mt-0.5">R$ {timeStats.revToday.toFixed(2)} / R$ <input type="number" className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.daily} onChange={(e) => setGoals({...goals, daily: Number(e.target.value)})}/></p>
                          </div>
-                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.revToday / goals.daily) * 100, 100).toFixed(0)}%</span>
+                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.revToday / Math.max(goals.daily, 1)) * 100, 100).toFixed(0)}%</span>
                        </div>
                        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
-                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.revToday / goals.daily) * 100, 100)}%` }}></div>
+                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.revToday / Math.max(goals.daily, 1)) * 100, 100)}%` }}></div>
                        </div>
                      </div>
 
@@ -873,10 +890,10 @@ export default function CookieDashboard() {
                            <p className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Target size={16} className="text-amber-500"/> Meta Semanal</p>
                            <p className="text-xs text-gray-400 mt-0.5">R$ {timeStats.rev7Days.toFixed(2)} / R$ <input type="number" className="w-16 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.weekly} onChange={(e) => setGoals({...goals, weekly: Number(e.target.value)})}/></p>
                          </div>
-                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.rev7Days / goals.weekly) * 100, 100).toFixed(0)}%</span>
+                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.rev7Days / Math.max(goals.weekly, 1)) * 100, 100).toFixed(0)}%</span>
                        </div>
                        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
-                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.rev7Days / goals.weekly) * 100, 100)}%` }}></div>
+                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.rev7Days / Math.max(goals.weekly, 1)) * 100, 100)}%` }}></div>
                        </div>
                      </div>
 
@@ -1155,7 +1172,7 @@ export default function CookieDashboard() {
                           <div key={ing.id} className="flex justify-between items-center pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0 last:pb-0">
                              <div>
                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{ing.name}</p>
-                               <p className="text-[10px] text-red-500 font-medium">Comprar: {ing.packagesToBuy} pct(s) de {ing.bulkQty}{ing.unit}</p>
+                               <p className="text-[10px] text-red-500 font-medium">Comprar: {ing.packagesToBuy} pct(s) ({ing.exactMissingToBuy}{ing.unit})</p>
                              </div>
                              <p className="text-sm font-bold text-gray-700 dark:text-gray-300">R$ {ing.costToBuy.toFixed(2)}</p>
                           </div>
