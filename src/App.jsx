@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 // IMPORTAÇÕES DO FIREBASE
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, initializeFirestore } from 'firebase/firestore';
 
 // IMPORTAÇÕES DOS ÍCONES
@@ -12,7 +12,7 @@ import {
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
   AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
-  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit, Store, Send
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -39,13 +39,18 @@ const INITIAL_PRODUCTS = [
   { id: 'prod-1', name: 'Cookie Tradicional', price: 10.00, type: 'single', units: 1 }
 ];
 
-// Helper para obter a data de hoje no formato YYYY-MM-DD
+// Helpers de Data
 const getTodayYMD = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
+const getMaxDateYMD = (daysAdvance) => {
+  const d = new Date();
+  d.setDate(d.getDate() + (Number(daysAdvance) || 14));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
 
-// --- COMPONENTE EXTRA: NODE DA REDE DE INDICAÇÕES ---
+// --- COMPONENTE: NODE DA REDE DE INDICAÇÕES ---
 const NetworkNode = ({ customer, customers, isRoot = false }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const children = customers.filter(c => c.referredBy === customer.id);
@@ -73,15 +78,14 @@ const NetworkNode = ({ customer, customers, isRoot = false }) => {
 
 
 export default function CookieDashboard() {
+  // ROTEAMENTO: 'loading', 'storefront', 'admin_login', 'dashboard'
+  const [appMode, setAppMode] = useState('loading'); 
+  
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
   const [showFooterDetails, setShowFooterDetails] = useState(false);
   
-  // ==========================================
-  // ESTADOS DE AUTENTICAÇÃO E LOGIN
-  // ==========================================
   const [user, setUser] = useState(null);
-  const [loadingAuth, setLoadingAuth] = useState(true);
   const [authMode, setAuthMode] = useState('login'); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -89,7 +93,7 @@ export default function CookieDashboard() {
   const [resetMessage, setResetMessage] = useState('');
 
   // ==========================================
-  // ESTADOS COM FIREBASE (BANCO DE DADOS REAL)
+  // ESTADOS ADMIN (BANCO DE DADOS PRIVADO)
   // ==========================================
   const [customers, setCustomers] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
@@ -97,56 +101,69 @@ export default function CookieDashboard() {
   const [ingredients, setIngredients] = useState([]);
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [onlineOrders, setOnlineOrders] = useState([]); // Pedidos do WhatsApp!
   
   const [recipeConfig, setRecipeConfig] = useState({ yield: 12, salePrice: 10.00 });
   const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); 
+  const [storeSettings, setStoreSettings] = useState({ 
+    isStoreOpen: true, 
+    closedMessage: 'Estamos assando novas fornadas! Voltamos logo.', 
+    maxAdvanceDays: 14, 
+    whatsappNumber: '' 
+  });
   const [sheetUrl, setSheetUrl] = useState('');
   const [lastSync, setLastSync] = useState(null);
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
-  // Estados de interface (Formulários)
+  // Formulários Admin
   const [newSuggestion, setNewSuggestion] = useState({ type: 'flavor', text: '' });
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
-  
-  // Carrinhos
   const [quickSale, setQuickSale] = useState({ customerName: '', referredByInput: '', productId: '', quantity: 1, revenue: 0, date: getTodayYMD(), observation: '' });
   const [quickSaleCart, setQuickSaleCart] = useState([]);
-  
   const [newReservation, setNewReservation] = useState({ name: '', referredByInput: '', productId: '', quantity: 1, date: '', observation: '' });
   const [reservationCart, setReservationCart] = useState([]);
-
-  // Estados de Edição (Modais)
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [editingReservation, setEditingReservation] = useState(null);
-
   const [productionBatches, setProductionBatches] = useState(1);
-
   const [customerSortBy, setCustomerSortBy] = useState('name-asc');
   const [reservationSortBy, setReservationSortBy] = useState('date-asc');
-  
   const [suggestionMatchContext, setSuggestionMatchContext] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
 
-  // --- 1. MONITORIZAR AUTENTICAÇÃO ---
+  // ==========================================
+  // ESTADOS PÚBLICOS (LOJA/STOREFRONT)
+  // ==========================================
+  const [publicProducts, setPublicProducts] = useState([]);
+  const [publicSettings, setPublicSettings] = useState({ isStoreOpen: false, closedMessage: 'Carregando Loja...', maxAdvanceDays: 14, whatsappNumber: '' });
+  const [storeCart, setStoreCart] = useState([]);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã', address: '', itemObs: '' });
+
+  // --- 1. MONITORIZAR AUTENTICAÇÃO E ROTAS ---
   useEffect(() => {
     if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setLoadingAuth(false);
+      if (currentUser) {
+        if (currentUser.isAnonymous) setAppMode('storefront');
+        else setAppMode('dashboard');
+      } else {
+        try { await signInAnonymously(auth); } 
+        catch (e) { console.error(e); setAppMode('storefront'); }
+      }
     });
     return () => unsubscribe();
   }, []);
 
   const handleAuthenticate = async (e) => {
-    e.preventDefault();
-    setAuthError(''); setResetMessage('');
+    e.preventDefault(); setAuthError(''); setResetMessage('');
     try {
       if (authMode === 'login') await signInWithEmailAndPassword(auth, email, password);
       else await createUserWithEmailAndPassword(auth, email, password);
     } catch (error) {
       if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') setAuthError('Email ou senha incorretos.');
-      else if (error.code === 'auth/email-already-in-use') setAuthError('Este email já está cadastrado. Tente fazer Login.');
+      else if (error.code === 'auth/email-already-in-use') setAuthError('Este email já está cadastrado.');
       else if (error.code === 'auth/weak-password') setAuthError('A senha deve ter pelo menos 6 caracteres.');
       else setAuthError('Erro na autenticação: ' + error.message);
     }
@@ -154,17 +171,15 @@ export default function CookieDashboard() {
 
   const handleResetPassword = async () => {
     if (!email) { setAuthError('Digite o seu email acima para recuperar a senha.'); return; }
-    try {
-      await sendPasswordResetEmail(auth, email);
-      setResetMessage('Email de recuperação enviado! Verifique o Spam.'); setAuthError('');
-    } catch (error) { setAuthError('Erro: ' + error.message); }
+    try { await sendPasswordResetEmail(auth, email); setResetMessage('Email de recuperação enviado!'); setAuthError(''); } 
+    catch (error) { setAuthError('Erro: ' + error.message); }
   };
 
   const handleLogout = () => signOut(auth);
 
-  // --- 2. LER DADOS EM TEMPO REAL ---
+  // --- 2. DADOS PRIVADOS DO ADMIN ---
   useEffect(() => {
-    if (!db || !user) return;
+    if (!db || !user || user.isAnonymous) return;
     const uid = user.uid;
     const baseArgs = ['artifacts', appId, 'users', uid];
 
@@ -183,43 +198,60 @@ export default function CookieDashboard() {
              const data = snap.data();
              if(data.recipeConfig) setRecipeConfig(data.recipeConfig);
              if(data.goals) setGoals(data.goals);
+             if(data.storeSettings) setStoreSettings(data.storeSettings);
              if(data.lastSync) setLastSync(data.lastSync);
              if(data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
          }
          setIsConfigLoaded(true);
+      }, console.error),
+      // Lê os pedidos que vêm da loja online pública
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'online_orders'), snap => {
+         setOnlineOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt)));
       }, console.error)
     ];
     return () => unsubs.forEach(fn => fn());
   }, [user]);
 
-  const saveToDb = async (col, id, data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id), data); };
-  const deleteFromDb = async (col, id) => { if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
-  const saveConfig = async (data) => { if (db && user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
+  const saveToDb = async (col, id, data) => { if (db && user && !user.isAnonymous) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id), data); };
+  const deleteFromDb = async (col, id) => { if (db && user && !user.isAnonymous) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
+  const saveConfig = async (data) => { if (db && user && !user.isAnonymous) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
+  // Sincroniza configurações privadas e PUBLICA o catálogo e estado da loja para o Storefront ver!
   useEffect(() => { 
-    if (db && user && isConfigLoaded) { saveConfig({ recipeConfig, goals, sheetUrl }); }
-  }, [recipeConfig, goals, sheetUrl, user, isConfigLoaded]);
-
-  useEffect(() => {
-    if (!quickSale.productId && products.length > 0) {
-      setQuickSale(prev => ({ ...prev, productId: products[0].id, revenue: products[0].price }));
-    } else {
-      const p = products.find(p => p.id === quickSale.productId);
-      setQuickSale(prev => ({ ...prev, revenue: prev.quantity * (p ? p.price : recipeConfig.salePrice) }));
+    if (db && user && !user.isAnonymous && isConfigLoaded) { 
+      saveConfig({ recipeConfig, goals, sheetUrl, storeSettings }); 
+      // SYNC PÚBLICO
+      setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', 'items'), { products });
+      setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'info'), storeSettings);
     }
+  }, [recipeConfig, goals, sheetUrl, storeSettings, products, user, isConfigLoaded]);
+
+  // --- 3. LER DADOS PÚBLICOS (LOJA) ---
+  useEffect(() => {
+    if (db && user && (appMode === 'storefront' || appMode === 'dashboard')) {
+      const unsub1 = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', 'items'), snap => {
+         if (snap.exists()) setPublicProducts(snap.data().products || []);
+      });
+      const unsub2 = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'info'), snap => {
+         if (snap.exists()) setPublicSettings(snap.data());
+      });
+      return () => { unsub1(); unsub2(); };
+    }
+  }, [user, appMode]);
+
+  // Efeitos secundários dos formulários
+  useEffect(() => {
+    if (!quickSale.productId && products.length > 0) setQuickSale(prev => ({ ...prev, productId: products[0].id, revenue: products[0].price }));
+    else { const p = products.find(p => p.id === quickSale.productId); setQuickSale(prev => ({ ...prev, revenue: prev.quantity * (p ? p.price : recipeConfig.salePrice) })); }
   }, [quickSale.quantity, quickSale.productId, products, recipeConfig.salePrice]);
 
   useEffect(() => {
     if (!newReservation.productId && products.length > 0) setNewReservation(prev => ({ ...prev, productId: products[0].id }));
   }, [products]);
 
-  // --- LISTA DE CLIENTES ALFABÉTICA (Para a busca digitável) ---
-  const sortedCustomersAlpha = useMemo(() => {
-    return [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [customers]);
+  const sortedCustomersAlpha = useMemo(() => [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [customers]);
 
-  // --- CÁLCULOS DA FICHA TÉCNICA E CUSTOS ---
-  // Blindagem com Number() em todo o lado para evitar ecrãs brancos
+  // --- CÁLCULOS E INTELIGÊNCIA ---
   const costMetrics = useMemo(() => {
     const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((Number(ing.bulkPrice) || 0) / (Number(ing.bulkQty) || 1)) * (Number(ing.recipeQty) || 0), 0);
     const costPerCookie = totalRecipeCost / (Number(recipeConfig.yield) || 1);
@@ -228,26 +260,19 @@ export default function CookieDashboard() {
     return { totalRecipeCost, costPerCookie, profit, profitMargin };
   }, [ingredients, recipeConfig]);
 
-  // --- CÁLCULOS DE ESTOQUE E PRODUÇÃO ---
   const inventoryCheck = useMemo(() => {
     const list = ingredients.map(ing => {
       const wasteFactor = ing.applyWaste ? 1.02 : 1; 
       const totalNeeded = ((Number(ing.recipeQty) || 0) * wasteFactor) * (Number(productionBatches) || 1);
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
-      
-      let packagesToBuy = 0;
-      let costToBuy = 0;
-      let exactMissingToBuy = 0;
-      const safeBulkQty = Number(ing.bulkQty) || 1;
-
+      let packagesToBuy = 0; let costToBuy = 0; let exactMissingToBuy = 0; const safeBulkQty = Number(ing.bulkQty) || 1;
       if (missingAmount > 0 && safeBulkQty > 0) {
           const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
           packagesToBuy = Math.ceil(safeMissingAmount / safeBulkQty);
           costToBuy = packagesToBuy * (Number(ing.bulkPrice) || 0);
           exactMissingToBuy = packagesToBuy * safeBulkQty;
       }
-
       return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, wasteFactor };
     });
     const totalMissingCost = list.reduce((sum, item) => sum + (Number(item.costToBuy) || 0), 0);
@@ -261,9 +286,7 @@ export default function CookieDashboard() {
       const totalNeeded = ((Number(ing.recipeQty) || 0) * wasteFactor) * 1; 
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
-      let costToBuy = 0;
-      const safeBulkQty = Number(ing.bulkQty) || 1;
-      
+      let costToBuy = 0; const safeBulkQty = Number(ing.bulkQty) || 1;
       if (missingAmount > 0 && safeBulkQty > 0) {
           const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
           costToBuy = Math.ceil(safeMissingAmount / safeBulkQty) * (Number(ing.bulkPrice) || 0);
@@ -272,7 +295,6 @@ export default function CookieDashboard() {
     }, 0);
   }, [ingredients]);
 
-  // --- 🧠 MÓDULO INTELIGÊNCIA DE NEGÓCIO (BI) ---
   const globalMetrics = useMemo(() => {
     const totalRevenue = sales.reduce((acc, curr) => acc + (Number(curr.revenue) || 0), 0);
     const totalCookiesSold = sales.reduce((acc, curr) => acc + (Number(curr.cookieUnits) || Number(curr.quantity) || 0), 0);
@@ -289,27 +311,22 @@ export default function CookieDashboard() {
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
     const last7Days = new Date(today); last7Days.setDate(last7Days.getDate() - 6);
     const previous7Days = new Date(last7Days); previous7Days.setDate(previous7Days.getDate() - 7);
-    
     let revToday = 0, revYesterday = 0, rev7Days = 0, revPrev7Days = 0;
 
     sales.forEach(s => {
       if (!s.date) return;
       const d = new Date(s.date);
       if (isNaN(d.getTime())) return;
-      
       const localD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       const rev = Number(s.revenue) || 0;
-      
       if (localD.getTime() === today.getTime()) revToday += rev;
       else if (localD.getTime() === yesterday.getTime()) revYesterday += rev;
-      
       if (localD >= last7Days && localD <= today) rev7Days += rev;
       else if (localD >= previous7Days && localD < last7Days) revPrev7Days += rev;
     });
 
     const todayGrowth = revYesterday === 0 ? (revToday > 0 ? 100 : 0) : ((revToday - revYesterday) / revYesterday) * 100;
     const weekGrowth = revPrev7Days === 0 ? (rev7Days > 0 ? 100 : 0) : ((rev7Days - revPrev7Days) / revPrev7Days) * 100;
-
     return { revToday, revYesterday, todayGrowth, rev7Days, revPrev7Days, weekGrowth };
   }, [sales]);
 
@@ -318,7 +335,6 @@ export default function CookieDashboard() {
     const today = new Date();
     const currentDay = today.getDay();
     const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-    
     const currentMonday = new Date(today);
     currentMonday.setDate(today.getDate() + diffToMonday);
     currentMonday.setHours(0,0,0,0);
@@ -329,7 +345,6 @@ export default function CookieDashboard() {
       const end = new Date(start);
       end.setDate(start.getDate() + 6);
       end.setHours(23,59,59,999);
-      
       const format = (dt) => `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth()+1).padStart(2, '0')}`;
       stats.push({ label: `${format(start)} a \n${format(end)}`, start, end, salesQty: 0, revenue: 0, estimatedProfit: 0 });
     }
@@ -338,13 +353,11 @@ export default function CookieDashboard() {
       if (!sale.date) return;
       const saleDate = new Date(sale.date);
       if (isNaN(saleDate.getTime())) return;
-      
       const week = stats.find(w => saleDate >= w.start && saleDate <= w.end);
       if (week) {
         const qty = Number(sale.cookieUnits) || Number(sale.quantity) || 0;
         const rev = Number(sale.revenue) || 0;
-        week.salesQty += qty;
-        week.revenue += rev;
+        week.salesQty += qty; week.revenue += rev;
         week.estimatedProfit += (rev - (costMetrics.costPerCookie * qty));
       }
     });
@@ -381,7 +394,6 @@ export default function CookieDashboard() {
     return (revThisMonth / daysPassed) * daysInMonth;
   }, [sales]);
 
-  // --- CÁLCULOS DE RESERVAS ORDENADAS E FILTRADAS ---
   const sortedReservations = useMemo(() => {
     let sorted = [...reservations];
     switch(reservationSortBy) {
@@ -391,10 +403,7 @@ export default function CookieDashboard() {
       case 'product-asc': sorted.sort((a, b) => (a.productName || '').localeCompare(b.productName || '')); break;
       default: break;
     }
-    return {
-      pending: sorted.filter(r => r.status === 'pending'),
-      past: sorted.filter(r => r.status !== 'pending')
-    };
+    return { pending: sorted.filter(r => r.status === 'pending'), past: sorted.filter(r => r.status !== 'pending') };
   }, [reservations, reservationSortBy]);
 
   const expectedMetrics = useMemo(() => {
@@ -404,7 +413,6 @@ export default function CookieDashboard() {
     return { revenue, cookies, batchesNeeded };
   }, [sortedReservations.pending, recipeConfig.yield]);
 
-  // --- CÁLCULOS DE CLIENTES ---
   const customersWithStats = useMemo(() => {
     return customers.map(customer => {
       const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
@@ -413,9 +421,7 @@ export default function CookieDashboard() {
     });
   }, [customers]);
 
-  const pendingRewards = useMemo(() => {
-    return customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0));
-  }, [customersWithStats]);
+  const pendingRewards = useMemo(() => customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0)), [customersWithStats]);
 
   const sortedCustomersWithStats = useMemo(() => {
     let sorted = [...customersWithStats];
@@ -429,54 +435,31 @@ export default function CookieDashboard() {
     return sorted;
   }, [customersWithStats, customerSortBy]);
 
-  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
-  const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10);
-  const rootCustomers = customers.filter(c => !c.referredBy);
-
-  // ==========================================
-  // HANDLERS (AÇÕES)
-  // ==========================================
-  
+  // --- HANDLERS E FUNÇÕES ADMIN ---
   const handleAddToCartQuickSale = () => {
     if (!quickSale.quantity || !quickSale.revenue) return;
     const p = products.find(prod => prod.id === quickSale.productId);
-    
     setQuickSaleCart([...quickSaleCart, {
-      productId: p ? p.id : 'avulso', 
-      productName: p ? p.name : 'Produto Avulso',
-      quantity: Number(quickSale.quantity),
-      cookieUnits: (p?.units || 1) * Number(quickSale.quantity),
-      revenue: Number(quickSale.revenue),
-      observation: quickSale.observation
+      productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(quickSale.quantity),
+      cookieUnits: (p?.units || 1) * Number(quickSale.quantity), revenue: Number(quickSale.revenue), observation: quickSale.observation
     }]);
     setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p ? p.price : recipeConfig.salePrice, observation: '' }));
   };
 
   const handleFinalizeQuickSale = (e) => {
-    e.preventDefault();
-    if (!quickSale.customerName || !user) return;
-
+    e.preventDefault(); if (!quickSale.customerName || !user) return;
     let finalCart = [...quickSaleCart];
     if (quickSale.quantity > 0 && quickSale.revenue > 0) {
       const p = products.find(prod => prod.id === quickSale.productId);
-      finalCart.push({
-        productId: p ? p.id : 'avulso', 
-        productName: p ? p.name : 'Produto Avulso',
-        quantity: Number(quickSale.quantity), 
-        cookieUnits: (p?.units || 1) * Number(quickSale.quantity), 
-        revenue: Number(quickSale.revenue),
-        observation: quickSale.observation
-      });
+      finalCart.push({ productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(quickSale.quantity), cookieUnits: (p?.units || 1) * Number(quickSale.quantity), revenue: Number(quickSale.revenue), observation: quickSale.observation });
     }
     if (finalCart.length === 0) return;
 
-    const todayYMD = getTodayYMD();
     let saleDateIso = new Date().toISOString();
-    if (quickSale.date && quickSale.date !== todayYMD) {
+    if (quickSale.date && quickSale.date !== getTodayYMD()) {
       const parsedDate = new Date(`${quickSale.date}T12:00:00`);
       if (!isNaN(parsedDate.getTime())) saleDateIso = parsedDate.toISOString();
     }
-
     let finalReferredBy = null;
     if (quickSale.referredByInput) {
        const found = customers.find(c => (c.name || '').toLowerCase() === quickSale.referredByInput.toLowerCase().trim());
@@ -485,54 +468,32 @@ export default function CookieDashboard() {
 
     finalCart.forEach(item => {
       const newSaleId = Math.random().toString(36).substr(2, 9);
-      saveToDb('sales', newSaleId, {
-        id: newSaleId, date: saleDateIso, quantity: item.quantity, cookieUnits: item.cookieUnits, 
-        revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName,
-        observation: item.observation || ''
-      });
+      saveToDb('sales', newSaleId, { id: newSaleId, date: saleDateIso, quantity: item.quantity, cookieUnits: item.cookieUnits, revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName, observation: item.observation || '' });
     });
 
     const existingCustomer = customers.find(c => (c.name || '').toLowerCase() === quickSale.customerName.toLowerCase().trim());
     if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: (Number(existingCustomer.purchases) || 0) + 1 });
-    else {
-      const newCustId = Math.random().toString(36).substr(2, 9);
-      saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: finalReferredBy, purchases: 1 });
-    }
+    else saveToDb('customers', Math.random().toString(36).substr(2, 9), { id: Math.random().toString(36).substr(2, 9), name: quickSale.customerName.trim(), referredBy: finalReferredBy, purchases: 1 });
 
-    setQuickSaleCart([]);
-    setQuickSale({ customerName: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD(), observation: '' });
+    setQuickSaleCart([]); setQuickSale({ customerName: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD(), observation: '' });
   };
 
   const handleAddToCartReservation = () => {
     if (!newReservation.quantity) return;
     const p = products.find(prod => prod.id === newReservation.productId);
-    
     setReservationCart([...reservationCart, {
-      productId: p ? p.id : 'avulso', 
-      productName: p ? p.name : 'Produto Avulso', 
-      quantity: Number(newReservation.quantity),
-      cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
-      expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity),
-      observation: newReservation.observation
+      productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(newReservation.quantity),
+      cookieUnits: (p?.units || 1) * Number(newReservation.quantity), expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity), observation: newReservation.observation
     }]);
     setNewReservation(prev => ({ ...prev, quantity: 1, observation: '' }));
   };
 
   const handleFinalizeReservation = (e) => {
-    e.preventDefault();
-    if (!newReservation.name || !user) return;
-
+    e.preventDefault(); if (!newReservation.name || !user) return;
     let finalCart = [...reservationCart];
     if (newReservation.quantity > 0) {
       const p = products.find(prod => prod.id === newReservation.productId);
-      finalCart.push({
-        productId: p ? p.id : 'avulso', 
-        productName: p ? p.name : 'Produto Avulso', 
-        quantity: Number(newReservation.quantity),
-        cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
-        expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity),
-        observation: newReservation.observation
-      });
+      finalCart.push({ productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(newReservation.quantity), cookieUnits: (p?.units || 1) * Number(newReservation.quantity), expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity), observation: newReservation.observation });
     }
     if (finalCart.length === 0) return;
 
@@ -544,16 +505,9 @@ export default function CookieDashboard() {
 
     finalCart.forEach(item => {
       const newId = Math.random().toString(36).substr(2, 9);
-      saveToDb('reservations', newId, { 
-        id: newId, name: newReservation.name.trim(), referredBy: finalReferredBy,
-        productId: item.productId, productName: item.productName,
-        quantity: item.quantity, cookieUnits: item.cookieUnits, expectedRevenue: item.expectedRevenue,
-        date: newReservation.date, status: 'pending', observation: item.observation || ''
-      });
+      saveToDb('reservations', newId, { id: newId, name: newReservation.name.trim(), referredBy: finalReferredBy, productId: item.productId, productName: item.productName, quantity: item.quantity, cookieUnits: item.cookieUnits, expectedRevenue: item.expectedRevenue, date: newReservation.date, status: 'pending', observation: item.observation || '' });
     });
-
-    setReservationCart([]);
-    setNewReservation({ name: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, date: '', observation: '' });
+    setReservationCart([]); setNewReservation({ name: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, date: '', observation: '' });
   };
   
   const handleUpdateReservationStatus = (id, status) => {
@@ -565,60 +519,58 @@ export default function CookieDashboard() {
           saveToDb('sales', newSaleId, { id: newSaleId, date: new Date().toISOString(), quantity: r.quantity, cookieUnits: r.cookieUnits, revenue: r.expectedRevenue, customerName: r.name, productName: r.productName, observation: r.observation || '' });
           const existingCustomer = customers.find(c => (c.name || '').toLowerCase() === (r.name || '').toLowerCase().trim());
           if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: (Number(existingCustomer.purchases) || 0) + 1 });
-          else {
-              const newCustId = Math.random().toString(36).substr(2, 9);
-              saveToDb('customers', newCustId, { id: newCustId, name: (r.name || '').trim(), referredBy: r.referredBy || null, purchases: 1 });
-          }
+          else saveToDb('customers', Math.random().toString(36).substr(2, 9), { id: Math.random().toString(36).substr(2, 9), name: (r.name || '').trim(), referredBy: r.referredBy || null, purchases: 1 });
       }
     }
   };
 
+  const handleApproveOnlineOrder = (order) => {
+    order.cart.forEach(item => {
+      const newId = Math.random().toString(36).substr(2, 9);
+      let finalReferredBy = null;
+      if (order.referredByInput) {
+          const found = customers.find(c => (c.name || '').toLowerCase() === order.referredByInput.toLowerCase().trim());
+          if (found) finalReferredBy = found.id;
+      }
+      saveToDb('reservations', newId, {
+          id: newId, name: order.customerName.trim(), referredByInput: order.referredByInput || '', referredBy: finalReferredBy,
+          productId: item.productId, productName: item.productName, quantity: item.qty, cookieUnits: item.units * item.qty,
+          expectedRevenue: item.price * item.qty, date: order.deliveryDate, status: 'pending',
+          observation: `[Loja - ${order.deliveryType === 'unesp' ? 'UNESP ' + order.period : 'Casa ' + order.address}] ${item.obs || ''}`
+      });
+    });
+    deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_orders', order.id));
+  };
+
+  const handleRejectOnlineOrder = (orderId) => { deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_orders', orderId)); };
+
   const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
 
-  // --- HANDLERS DE EDIÇÃO (COM CONTROLE DO INDICADOR) ---
   const handleSaveEditCustomer = (e) => {
-    e.preventDefault();
-    if (!editingCustomer || !user) return;
-    
+    e.preventDefault(); if (!editingCustomer || !user) return;
     let finalReferredBy = editingCustomer.referredBy; 
     if (editingCustomer.referredByInput !== undefined) {
-        if (editingCustomer.referredByInput === '') {
-            finalReferredBy = null;
-        } else {
+        if (editingCustomer.referredByInput === '') finalReferredBy = null;
+        else {
             const found = customers.find(c => (c.name || '').toLowerCase() === editingCustomer.referredByInput.toLowerCase().trim());
             if (found) finalReferredBy = found.id;
         }
     }
-
-    saveToDb('customers', editingCustomer.id, {
-      ...editingCustomer,
-      purchases: Number(editingCustomer.purchases) || 0,
-      referredBy: finalReferredBy
-    });
+    saveToDb('customers', editingCustomer.id, { ...editingCustomer, purchases: Number(editingCustomer.purchases) || 0, referredBy: finalReferredBy });
     setEditingCustomer(null);
   };
 
   const handleSaveEditReservation = (e) => {
-    e.preventDefault();
-    if (!editingReservation || !user) return;
-
+    e.preventDefault(); if (!editingReservation || !user) return;
     let finalReferredBy = editingReservation.referredBy; 
     if (editingReservation.referredByInput !== undefined) {
-        if (editingReservation.referredByInput === '') {
-            finalReferredBy = null;
-        } else {
+        if (editingReservation.referredByInput === '') finalReferredBy = null;
+        else {
             const found = customers.find(c => (c.name || '').toLowerCase() === editingReservation.referredByInput.toLowerCase().trim());
             if (found) finalReferredBy = found.id;
         }
     }
-
-    saveToDb('reservations', editingReservation.id, {
-      ...editingReservation,
-      quantity: Number(editingReservation.quantity) || 1,
-      expectedRevenue: Number(editingReservation.expectedRevenue) || 0,
-      cookieUnits: Number(editingReservation.cookieUnits) || 1,
-      referredBy: finalReferredBy
-    });
+    saveToDb('reservations', editingReservation.id, { ...editingReservation, quantity: Number(editingReservation.quantity) || 1, expectedRevenue: Number(editingReservation.expectedRevenue) || 0, cookieUnits: Number(editingReservation.cookieUnits) || 1, referredBy: finalReferredBy });
     setEditingReservation(null);
   };
 
@@ -626,18 +578,13 @@ export default function CookieDashboard() {
     let updated = { ...editingReservation, [field]: value };
     if (field === 'productId' || field === 'quantity') {
       const p = products.find(prod => prod.id === updated.productId);
-      if (p) {
-         updated.productName = p.name;
-         updated.cookieUnits = (p.units || 1) * Number(updated.quantity || 1);
-         updated.expectedRevenue = p.price * Number(updated.quantity || 1);
-      }
+      if (p) { updated.productName = p.name; updated.cookieUnits = (p.units || 1) * Number(updated.quantity || 1); updated.expectedRevenue = p.price * Number(updated.quantity || 1); }
     }
     setEditingReservation(updated);
   };
 
   const handleAddProduct = (e) => {
-    e.preventDefault();
-    if (!newProduct.name || !newProduct.price || !user) return;
+    e.preventDefault(); if (!newProduct.name || !newProduct.price || !user) return;
     const newId = Math.random().toString(36).substr(2, 9);
     saveToDb('products', newId, { id: newId, name: newProduct.name, price: Number(newProduct.price), type: newProduct.type, units: newProduct.type === 'combo' ? Number(newProduct.units) : 1 });
     setNewProduct({ name: '', price: '', type: 'single', units: 2 });
@@ -691,7 +638,6 @@ export default function CookieDashboard() {
           
           const existingItem = ingredients.find(old => (old.name||'').toLowerCase() === name.toLowerCase());
           const currentStock = existingItem ? (existingItem.currentStock || 0) : 0;
-          
           const unitLower = (clean(row[unitIdx]) || 'un').toLowerCase();
           const defaultWaste = (unitLower === 'g' || unitLower === 'kg' || unitLower === 'ml' || unitLower === 'l');
           const applyWaste = existingItem && existingItem.applyWaste !== undefined ? existingItem.applyWaste : defaultWaste;
@@ -717,8 +663,7 @@ export default function CookieDashboard() {
   };
 
   const handleAddSuggestion = (e) => {
-    e.preventDefault();
-    if (!newSuggestion.text || !user) return;
+    e.preventDefault(); if (!newSuggestion.text || !user) return;
     const normalizedInput = newSuggestion.text.toLowerCase().trim();
     const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text || '').toLowerCase().includes(normalizedInput));
     if (matches.length > 0 && !suggestionMatchContext) { setSuggestionMatchContext({ pendingSuggestion: newSuggestion, match: matches[0] }); return; }
@@ -737,66 +682,303 @@ export default function CookieDashboard() {
   const handleUpvoteSuggestion = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 }); };
 
   // ==========================================
-  // RENDERIZAÇÕES PRINCIPAIS (TELA DE LOGIN E DASHBOARD)
+  // HANDLERS DA LOJA ONLINE PÚBLICA
   // ==========================================
+  
+  const handleAddToCartPublic = (product) => {
+    setStoreCart(prev => {
+       const existing = prev.find(p => p.productId === product.id && p.obs === checkoutData.itemObs);
+       if (existing) return prev.map(p => p === existing ? { ...p, qty: p.qty + 1 } : p);
+       return [...prev, { productId: product.id, name: product.name, price: product.price, units: product.units || 1, qty: 1, obs: checkoutData.itemObs || '' }];
+    });
+    setCheckoutData(prev => ({...prev, itemObs: ''}));
+  };
 
-  if (loadingAuth) {
+  const handleCheckoutPublic = async (e) => {
+    e.preventDefault();
+    if (!checkoutData.name || storeCart.length === 0) return;
+
+    const total = storeCart.reduce((a,b)=>a+b.price*b.qty, 0);
+    const orderId = Math.random().toString(36).substr(2, 9);
+    
+    // Grava no banco de dados para o Admin aprovar
+    const orderPayload = {
+       customerName: checkoutData.name,
+       referredByInput: checkoutData.referredBy,
+       deliveryDate: checkoutData.date,
+       deliveryType: checkoutData.deliveryType,
+       period: checkoutData.period,
+       address: checkoutData.address,
+       cart: storeCart,
+       total: total,
+       createdAt: new Date().toISOString()
+    };
+    
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_orders', orderId), orderPayload);
+      
+      // Gera mensagem de WhatsApp
+      let msg = `*NOVO PEDIDO - COOKIEDASH* 🍪\n\n`;
+      msg += `*Cliente:* ${checkoutData.name}\n`;
+      if (checkoutData.referredBy) msg += `*Indicado por:* ${checkoutData.referredBy}\n`;
+      msg += `*Data:* ${new Date(checkoutData.date).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}\n`;
+      if (checkoutData.deliveryType === 'unesp') msg += `*Local:* UNESP (${checkoutData.period})\n\n`;
+      else msg += `*Local:* Entrega (${checkoutData.address})\n\n`;
+      msg += `*Itens:*\n`;
+      storeCart.forEach(item => {
+         msg += `- ${item.qty}x ${item.name} (R$ ${(item.price * item.qty).toFixed(2)})\n`;
+         if (item.obs) msg += `  _Obs: ${item.obs}_\n`;
+      });
+      msg += `\n*Total: R$ ${total.toFixed(2)}*`;
+      
+      const waNumber = publicSettings.whatsappNumber ? publicSettings.whatsappNumber.replace(/\D/g, '') : '';
+      window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`, '_blank');
+      
+      setStoreCart([]);
+      setIsCartOpen(false);
+      alert('Seu pedido foi enviado para a nossa cozinha e também abriu no seu WhatsApp! Envie a mensagem para confirmar.');
+    } catch (err) {
+      alert('Erro ao enviar pedido. Tente novamente mais tarde.');
+    }
+  };
+
+  // ==========================================
+  // RENDERIZAÇÃO: CARREGANDO
+  // ==========================================
+  if (appMode === 'loading') {
     return (
       <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex flex-col items-center justify-center p-4">
         <Cookie className="text-amber-500 animate-spin mb-4" size={48} />
-        <p className="text-amber-800 dark:text-amber-400 font-medium">A carregar os seus cookies docinhos...</p>
+        <p className="text-amber-800 dark:text-amber-400 font-medium">A carregar o seu mundo doce...</p>
       </div>
     );
   }
 
-  if (!user) {
+  // ==========================================
+  // RENDERIZAÇÃO: LOJA ONLINE (STOREFRONT)
+  // ==========================================
+  if (appMode === 'storefront') {
+    return (
+      <div className="min-h-screen bg-orange-50 text-gray-800 font-sans pb-24">
+         {/* CABEÇALHO */}
+         <header className="bg-amber-900 text-white p-4 sticky top-0 z-40 shadow-md">
+            <div className="max-w-5xl mx-auto flex justify-between items-center">
+               <div className="flex items-center gap-2">
+                 <Cookie size={28} className="text-amber-300" />
+                 <h1 className="text-xl font-bold tracking-tight">CookieDash</h1>
+               </div>
+               <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors font-bold text-sm">
+                 <ShoppingCart size={18} /> Carrinho
+                 {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
+               </button>
+            </div>
+         </header>
+
+         {/* CORPO DA LOJA */}
+         <main className="max-w-5xl mx-auto p-4 mt-6">
+            {!publicSettings.isStoreOpen ? (
+               <div className="bg-white p-8 rounded-3xl shadow-sm text-center border-2 border-amber-200 mt-10">
+                  <Store size={64} className="text-amber-300 mx-auto mb-4" />
+                  <h2 className="text-2xl font-bold text-gray-800 mb-2">Loja Fechada no Momento</h2>
+                  <p className="text-gray-600 max-w-md mx-auto">{publicSettings.closedMessage}</p>
+               </div>
+            ) : (
+               <>
+                 <div className="text-center mb-10">
+                    <h2 className="text-3xl font-black text-amber-900 mb-2">Peça seus Cookies! 🍪</h2>
+                    <p className="text-amber-700 font-medium">Faça a sua reserva abaixo. Entregas na UNESP ou na sua casa.</p>
+                 </div>
+
+                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                    {publicProducts.map(prod => (
+                       <div key={prod.id} className="bg-white rounded-3xl shadow-sm border border-amber-100 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+                          <div className="h-32 bg-amber-100 flex items-center justify-center">
+                             {prod.type === 'combo' ? <Layers size={48} className="text-amber-300" /> : <Cookie size={48} className="text-amber-300" />}
+                          </div>
+                          <div className="p-5 flex flex-col flex-1">
+                             <h3 className="font-bold text-lg text-gray-800 mb-1">{prod.name}</h3>
+                             {prod.type === 'combo' && <p className="text-xs text-amber-600 font-medium mb-2">{prod.units} unidades</p>}
+                             <p className="text-xl font-black text-green-600 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
+                             
+                             <div className="mt-auto pt-4 border-t border-gray-100 space-y-3">
+                               <input type="text" className="w-full text-xs p-2 bg-gray-50 border border-gray-200 rounded-lg outline-none" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
+                               <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl transition-colors flex justify-center items-center gap-2">
+                                 <Plus size={16}/> Adicionar
+                               </button>
+                             </div>
+                          </div>
+                       </div>
+                    ))}
+                 </div>
+               </>
+            )}
+         </main>
+
+         {/* RODAPÉ E ADMIN LINK */}
+         <div className="text-center mt-12 mb-8">
+            <button onClick={() => { if(user && !user.isAnonymous) setAppMode('dashboard'); else setAppMode('admin_login'); }} className="text-xs font-bold text-amber-600 hover:text-amber-800 transition-colors bg-amber-100 px-4 py-2 rounded-full">
+              {user && !user.isAnonymous ? 'Voltar ao Dashboard' : 'Acesso Restrito (Admin)'}
+            </button>
+         </div>
+
+         {/* MODAL DO CARRINHO */}
+         {isCartOpen && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex justify-end">
+               <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-in slide-in-from-right-8 duration-300">
+                  <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-amber-50">
+                    <h3 className="font-bold text-gray-800 flex items-center gap-2"><ShoppingCart size={20} className="text-amber-600"/> Seu Pedido</h3>
+                    <button onClick={() => setIsCartOpen(false)} className="text-gray-500 hover:text-gray-800 p-2 bg-white rounded-full"><X size={20} /></button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+                     {storeCart.length === 0 ? (
+                        <p className="text-center text-gray-500 mt-10">Seu carrinho está vazio.</p>
+                     ) : (
+                        storeCart.map((item, i) => (
+                           <div key={i} className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                              <div>
+                                 <p className="font-bold text-gray-800 text-sm">{item.name}</p>
+                                 <p className="text-xs text-gray-500">R$ {(item.price * item.qty).toFixed(2)}</p>
+                                 {item.obs && <p className="text-[10px] text-amber-600 italic mt-0.5">Obs: {item.obs}</p>}
+                              </div>
+                              <div className="flex items-center gap-3">
+                                 <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1 border border-gray-200">
+                                   <button onClick={() => setStoreCart(prev => prev.map((p, idx) => idx === i ? {...p, qty: Math.max(1, p.qty - 1)} : p))} className="w-6 h-6 flex items-center justify-center font-bold text-gray-600">-</button>
+                                   <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
+                                   <button onClick={() => setStoreCart(prev => prev.map((p, idx) => idx === i ? {...p, qty: p.qty + 1} : p))} className="w-6 h-6 flex items-center justify-center font-bold text-gray-600">+</button>
+                                 </div>
+                                 <button onClick={() => setStoreCart(prev => prev.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={16}/></button>
+                              </div>
+                           </div>
+                        ))
+                     )}
+
+                     {storeCart.length > 0 && (
+                        <form id="checkout-form" onSubmit={handleCheckoutPublic} className="bg-white p-5 rounded-2xl shadow-sm border border-amber-200 mt-6 space-y-4">
+                           <h4 className="font-bold text-amber-900 border-b border-amber-100 pb-2 mb-4">Dados da Entrega</h4>
+                           
+                           <div>
+                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Seu Nome *</label>
+                             <input required type="text" className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.name} onChange={e => setCheckoutData({...checkoutData, name: e.target.value})} placeholder="Como podemos te chamar?" />
+                           </div>
+
+                           <div>
+                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Quem te indicou? (Opcional)</label>
+                             <input type="text" className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.referredBy} onChange={e => setCheckoutData({...checkoutData, referredBy: e.target.value})} placeholder="Nome de quem te falou de nós" />
+                             <p className="text-[10px] text-gray-400 mt-1">Sua indicação pode gerar cookies grátis para o seu amigo!</p>
+                           </div>
+
+                           <div className="flex gap-3">
+                             <div className="w-1/2">
+                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Tipo de Entrega *</label>
+                               <select required className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.deliveryType} onChange={e => setCheckoutData({...checkoutData, deliveryType: e.target.value})}>
+                                 <option value="unesp">Na UNESP</option>
+                                 <option value="home">Em Casa</option>
+                               </select>
+                             </div>
+                             <div className="w-1/2">
+                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Data *</label>
+                               <input required type="date" min={getTodayYMD()} max={getMaxDateYMD(publicSettings.maxAdvanceDays)} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.date} onChange={e => setCheckoutData({...checkoutData, date: e.target.value})} />
+                             </div>
+                           </div>
+
+                           {checkoutData.deliveryType === 'unesp' && (
+                             <div>
+                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Período (UNESP) *</label>
+                               <select required className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.period} onChange={e => setCheckoutData({...checkoutData, period: e.target.value})}>
+                                 <option value="Manhã">Manhã</option>
+                                 <option value="Tarde">Tarde</option>
+                                 <option value="Noite">Noite</option>
+                               </select>
+                             </div>
+                           )}
+
+                           {checkoutData.deliveryType === 'home' && (
+                             <div>
+                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Endereço Completo *</label>
+                               <input required type="text" className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.address} onChange={e => setCheckoutData({...checkoutData, address: e.target.value})} placeholder="Rua, Número, Bairro" />
+                             </div>
+                           )}
+
+                           <div className="bg-amber-50 p-3 rounded-xl border border-amber-200 text-xs text-amber-800 text-center font-medium mt-4">
+                             Atenção: Os pedidos são feitos sob demanda e estão sujeitos à disponibilidade do nosso estoque no dia!
+                           </div>
+                        </form>
+                     )}
+                  </div>
+                  
+                  {storeCart.length > 0 && (
+                     <div className="p-4 border-t border-gray-200 bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                           <span className="font-bold text-gray-600">Total do Pedido:</span>
+                           <span className="font-black text-2xl text-green-600">R$ {storeCart.reduce((a,b)=>a+b.price*b.qty, 0).toFixed(2)}</span>
+                        </div>
+                        <button form="checkout-form" type="submit" className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3.5 rounded-xl transition-colors shadow-lg flex items-center justify-center gap-2 text-lg">
+                           <Send size={20} /> Fechar Pedido via WhatsApp
+                        </button>
+                     </div>
+                  )}
+               </div>
+            </div>
+         )}
+      </div>
+    );
+  }
+
+  // ==========================================
+  // RENDERIZAÇÃO: LOGIN DO ADMIN
+  // ==========================================
+  if (appMode === 'admin_login') {
     return (
       <div className="min-h-screen bg-orange-50 dark:bg-gray-900 flex items-center justify-center p-4 transition-colors">
-        <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border border-amber-100 dark:border-gray-700 w-full max-w-md">
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border border-amber-100 dark:border-gray-700 w-full max-w-md relative">
+          <button onClick={() => setAppMode('storefront')} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 bg-gray-100 dark:bg-gray-700 p-2 rounded-full transition-colors"><X size={16}/></button>
           <div className="flex justify-center mb-6">
-            <div className="bg-amber-100 dark:bg-amber-900/50 p-4 rounded-full text-amber-600 dark:text-amber-400"><Cookie size={40} /></div>
+            <div className="bg-amber-100 dark:bg-amber-900/50 p-4 rounded-full text-amber-600 dark:text-amber-400"><Lock size={40} /></div>
           </div>
-          <h1 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100 mb-2">Bem-vindo ao CookieDash</h1>
-          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">{authMode === 'login' ? 'Entre na sua conta para aceder ao painel.' : 'Crie a sua conta de administrador.'}</p>
+          <h1 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100 mb-2">Acesso Restrito</h1>
+          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">Gestão interna do CookieDash.</p>
+          
           {authError && (<div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">{authError}</div>)}
           {resetMessage && (<div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl text-green-600 dark:text-green-400 text-sm font-medium text-center">{resetMessage}</div>)}
+          
           <form onSubmit={handleAuthenticate} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email do Admin</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input type="email" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
+                <input type="email" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="admin@cookiedash.com" value={email} onChange={(e) => setEmail(e.target.value)}/>
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Senha</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input type="password" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="Mínimo de 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} />
+                <input type="password" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="Sua senha secreta" value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
               {authMode === 'login' && (
                 <div className="text-right mt-2">
-                  <button type="button" onClick={handleResetPassword} className="text-xs text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400 font-medium transition-colors">Esqueci a minha senha</button>
+                  <button type="button" onClick={handleResetPassword} className="text-xs text-amber-600 hover:text-amber-700 font-medium transition-colors">Esqueci a senha</button>
                 </div>
               )}
             </div>
-            <button type="submit" className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-colors mt-4 shadow-md">
-              {authMode === 'login' ? 'Entrar no Dashboard' : 'Criar Conta e Entrar'}
+            <button type="submit" className="w-full bg-gray-900 hover:bg-black dark:bg-amber-600 dark:hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-colors mt-4 shadow-md">
+              {authMode === 'login' ? 'Entrar no Painel' : 'Criar Conta Admin'}
             </button>
           </form>
           <div className="mt-8 text-center border-t border-gray-100 dark:border-gray-700 pt-6">
-            <p className="text-gray-600 dark:text-gray-400 text-sm">
-              {authMode === 'login' ? 'Ainda não tem conta?' : 'Já tem uma conta?'}
-              <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); setResetMessage(''); }} className="ml-2 font-bold text-amber-600 dark:text-amber-500 hover:text-amber-700 dark:hover:text-amber-400 transition-colors">
-                {authMode === 'login' ? 'Registe-se aqui' : 'Faça Login'}
-              </button>
-            </p>
+            <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); setResetMessage(''); }} className="text-xs font-bold text-gray-500 hover:text-gray-800 dark:hover:text-gray-300 transition-colors">
+              {authMode === 'login' ? 'Criar primeira conta' : 'Já tenho conta'}
+            </button>
           </div>
         </div>
       </div>
     );
   }
 
+  // ==========================================
+  // RENDERIZAÇÃO: DASHBOARD (ADMIN)
+  // ==========================================
   return (
     <div className={`${darkMode ? 'dark' : ''} h-full relative`}>
       
@@ -817,10 +999,14 @@ export default function CookieDashboard() {
             <button onClick={() => setActiveTab('customers')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'customers' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Users size={20} /> Clientes</button>
             <button onClick={() => setActiveTab('costs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'costs' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Calculator size={20} /> Custos & Sync</button>
             <button onClick={() => setActiveTab('reservations')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'reservations' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><CalendarCheck size={20} /> Entregas</button>
+            <button onClick={() => setActiveTab('store_settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'store_settings' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Store size={20} /> Loja Online</button>
             <button onClick={() => setActiveTab('network')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'network' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Network size={20} /> Rede</button>
             <button onClick={() => setActiveTab('suggestions')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'suggestions' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><Lightbulb size={20} /> Ideias</button>
           </nav>
           <div className="mt-auto px-4 pb-6 space-y-2">
+            <button onClick={() => setAppMode('storefront')} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors bg-white/10 hover:bg-white/20 text-white border border-white/20 mb-4">
+              <Store size={18} /> <span className="font-medium text-sm">Ver Minha Loja</span>
+            </button>
             <button onClick={() => setDarkMode(!darkMode)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-colors hover:bg-amber-800/50 dark:hover:bg-gray-800 text-amber-200 dark:text-gray-400 hover:text-white border border-amber-800 dark:border-gray-800">
               {darkMode ? <Sun size={18} /> : <Moon size={18} />} <span className="font-medium text-sm">{darkMode ? 'Modo Claro' : 'Modo Escuro'}</span>
             </button>
@@ -835,7 +1021,7 @@ export default function CookieDashboard() {
            <button onClick={() => setActiveTab('dashboard')} className={`p-2 rounded-lg ${activeTab === 'dashboard' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><BarChart3 size={24}/></button>
            <button onClick={() => setActiveTab('inventory')} className={`p-2 rounded-lg ${activeTab === 'inventory' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ClipboardList size={24}/></button>
            <button onClick={() => setActiveTab('reservations')} className={`p-2 rounded-lg ${activeTab === 'reservations' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><CalendarCheck size={24}/></button>
-           <button onClick={() => setActiveTab('costs')} className={`p-2 rounded-lg ${activeTab === 'costs' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Calculator size={24}/></button>
+           <button onClick={() => setActiveTab('store_settings')} className={`p-2 rounded-lg ${activeTab === 'store_settings' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Store size={24}/></button>
            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
         </div>
 
@@ -1116,6 +1302,51 @@ export default function CookieDashboard() {
                   </div>
 
                   <div className="lg:col-span-2 space-y-6">
+                    {/* PEDIDOS DO WHATSAPP (NOVO) */}
+                    <div className="bg-green-50/50 dark:bg-gray-800 rounded-2xl shadow-sm border-2 border-green-200 dark:border-green-700/50 overflow-hidden transition-colors">
+                      <div className="p-4 border-b border-green-200 dark:border-green-700/50 bg-green-100/50 dark:bg-green-900/30 flex justify-between items-center">
+                         <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2"><ShoppingCart size={18}/> 🛒 Pedidos da Loja Online</h3>
+                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-green-700 dark:text-green-500">{onlineOrders.length} aguardando</span>
+                      </div>
+                      <div className="overflow-x-auto max-h-[300px]">
+                        <table className="w-full text-left border-collapse">
+                          <tbody>
+                            {onlineOrders.length === 0 ? (
+                              <tr><td colSpan="4" className="p-6 text-center text-sm text-gray-500">Nenhum pedido novo do site.</td></tr>
+                            ) : onlineOrders.map((order) => (
+                              <tr key={order.id} className="border-b border-green-100 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-750 transition-colors">
+                                <td className="p-3">
+                                  <div className="flex flex-col gap-0.5">
+                                    <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{order.customerName}</p>
+                                    <p className="text-[10px] text-gray-500 font-medium">Criado em: {new Date(order.createdAt).toLocaleDateString('pt-BR')}</p>
+                                    {order.referredByInput && <p className="text-[10px] text-amber-600 font-bold">🌟 Indicação: {order.referredByInput}</p>}
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <div className="flex flex-col gap-1">
+                                    {order.cart.map((item, idx) => (
+                                      <p key={idx} className="text-xs text-gray-600 dark:text-gray-300 font-medium">
+                                        {item.qty}x {item.name}
+                                        {item.obs && <span className="text-amber-500 italic block"> - Obs: {item.obs}</span>}
+                                      </p>
+                                    ))}
+                                    <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-1 bg-blue-50 dark:bg-blue-900/30 w-fit px-1 rounded">
+                                      Entrega: {order.deliveryType === 'unesp' ? `UNESP (${order.period})` : `Casa (${order.address})`} - {new Date(order.deliveryDate).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td className="p-3 text-right text-sm font-bold text-green-700 dark:text-green-500">R$ {(Number(order.total)||0).toFixed(2)}</td>
+                                <td className="p-3 text-center flex flex-col sm:flex-row items-center justify-center gap-1 mt-2">
+                                  <button onClick={() => handleApproveOnlineOrder(order)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1.5 text-xs font-bold rounded shadow-sm transition-colors w-full sm:w-auto">Aprovar</button>
+                                  <button onClick={() => handleRejectOnlineOrder(order.id)} className="text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 p-1.5 rounded transition-colors w-full sm:w-auto" title="Descartar"><Trash2 size={16} className="mx-auto"/></button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
                     <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 p-6 flex flex-col transition-colors">
                       <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
@@ -1124,6 +1355,16 @@ export default function CookieDashboard() {
                         <span className="text-sm font-bold text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-lg">R$ {(Number(expectedMetrics.revenue)||0).toFixed(2)}</span>
                       </div>
                       
+                      <div className="flex justify-between items-center mb-3">
+                         <span className="text-xs font-bold text-gray-500">Filtrar por:</span>
+                         <select className="text-xs bg-gray-50 border border-gray-200 rounded p-1 outline-none font-bold text-gray-700 dark:bg-gray-900 dark:border-gray-700 dark:text-gray-300 cursor-pointer" value={reservationSortBy} onChange={e => setReservationSortBy(e.target.value)}>
+                           <option value="date-asc">Data ⬆</option>
+                           <option value="date-desc">Data ⬇</option>
+                           <option value="name-asc">Nome Cliente (A-Z)</option>
+                           <option value="product-asc">Produto (A-Z)</option>
+                         </select>
+                      </div>
+
                       <div className="flex-1 overflow-y-auto space-y-3 pr-2 max-h-[300px]">
                         {sortedReservations.pending.length === 0 ? (
                           <p className="text-sm text-gray-400 text-center mt-4">Nenhuma encomenda pendente para entregar.</p>
@@ -1186,7 +1427,6 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
-                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1555,6 +1795,86 @@ export default function CookieDashboard() {
             </div>
           )}
 
+          {/* TAB: LOJA ONLINE (CONFIGURAÇÕES) */}
+          {activeTab === 'store_settings' && (
+            <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300">
+              <div className="flex justify-between items-end mb-6">
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Loja Online</h2>
+                  <p className="text-gray-600 dark:text-gray-400 mt-2">Configure como os seus clientes fazem pedidos pelo site.</p>
+                </div>
+                <button onClick={() => setAppMode('storefront')} className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 px-5 rounded-xl transition-colors flex items-center gap-2 shadow-sm">
+                  <Store size={18} /> Ver Minha Loja
+                </button>
+              </div>
+
+              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 overflow-hidden transition-colors">
+                <div className="p-6 border-b border-gray-100 dark:border-gray-700 bg-amber-50 dark:bg-gray-900">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                    <Store className="text-amber-600 dark:text-amber-500" size={20}/> Configurações Gerais
+                  </h3>
+                </div>
+                <div className="p-6 space-y-6">
+                  
+                  {/* Toggle Aberta/Fechada */}
+                  <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700">
+                    <div>
+                      <p className="font-bold text-gray-800 dark:text-gray-200 text-lg">Status da Loja</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Permitir que clientes façam pedidos agora.</p>
+                    </div>
+                    <button 
+                      onClick={() => setStoreSettings({...storeSettings, isStoreOpen: !storeSettings.isStoreOpen})}
+                      className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors focus:outline-none ${storeSettings.isStoreOpen ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                    >
+                      <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${storeSettings.isStoreOpen ? 'translate-x-7' : 'translate-x-1'}`}/>
+                    </button>
+                  </div>
+
+                  {/* Mensagem de Loja Fechada */}
+                  {!storeSettings.isStoreOpen && (
+                    <div className="animate-in fade-in slide-in-from-top-2">
+                      <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Mensagem de Loja Fechada</label>
+                      <textarea 
+                        className="w-full p-3 bg-white dark:bg-gray-900 border border-red-200 dark:border-red-800/50 rounded-xl outline-none focus:ring-2 focus:ring-red-500 text-sm text-gray-800 dark:text-gray-200"
+                        rows="2"
+                        value={storeSettings.closedMessage}
+                        onChange={e => setStoreSettings({...storeSettings, closedMessage: e.target.value})}
+                        placeholder="Ex: Voltamos amanhã!"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Seu WhatsApp (Receber Pedidos)</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 font-bold">+55</span>
+                        <input 
+                          type="text" 
+                          className="w-full pl-11 pr-3 py-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm text-gray-800 dark:text-gray-200"
+                          value={storeSettings.whatsappNumber}
+                          onChange={e => setStoreSettings({...storeSettings, whatsappNumber: e.target.value.replace(/\D/g, '')})}
+                          placeholder="Ex: 11999999999"
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-500 mt-1">Apenas números com DDD.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Antecedência Máxima (Dias)</label>
+                      <input 
+                        type="number" min="1" max="90"
+                        className="w-full p-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm text-gray-800 dark:text-gray-200"
+                        value={storeSettings.maxAdvanceDays}
+                        onChange={e => setStoreSettings({...storeSettings, maxAdvanceDays: Number(e.target.value)})}
+                      />
+                      <p className="text-[10px] text-gray-500 mt-1">Limite do calendário (ex: 14 para duas semanas).</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB: CLIENTES */}
           {activeTab === 'customers' && (
             <div className="max-w-6xl mx-auto animate-in fade-in duration-300">
@@ -1595,176 +1915,6 @@ export default function CookieDashboard() {
                       ))}
                     </tbody>
                   </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB: RESERVAS */}
-          {activeTab === 'reservations' && (
-            <div className="max-w-6xl mx-auto animate-in fade-in duration-300">
-              <div className="mb-8">
-                <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Reservas e Encomendas</h2>
-                <p className="text-gray-600 dark:text-gray-400 mt-2">Crie encomendas. Ao marcá-las como "Concluídas", o sistema vai enviá-las <b>automaticamente para a sua aba de Vendas</b> e atualizar o cliente!</p>
-              </div>
-              
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Carrinho de Reservas */}
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 h-fit transition-colors flex flex-col">
-                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><Plus size={20} className="text-amber-600 dark:text-amber-500" /> Nova Encomenda</h3>
-                  <form onSubmit={handleFinalizeReservation} className="space-y-4 flex flex-col flex-1">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nome do Cliente</label>
-                      <input list="customers-list" required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.name} onChange={e => setNewReservation({...newReservation, name: e.target.value})} placeholder="Escreva ou escolha..." />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quem indicou? (Opcional)</label>
-                      <input list="customers-list" type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.referredByInput} onChange={e => setNewReservation({...newReservation, referredByInput: e.target.value})} placeholder="Busque..." />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data de Entrega (Opcional)</label>
-                      <input type="date" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.date} onChange={e => setNewReservation({...newReservation, date: e.target.value})} />
-                    </div>
-
-                    <div className="bg-amber-50 dark:bg-gray-900 p-4 rounded-xl border border-amber-200 dark:border-gray-700 mt-2">
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Adicionar Item</label>
-                      <select className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-amber-500 transition-colors mb-2 text-sm" value={newReservation.productId} onChange={e => setNewReservation({...newReservation, productId: e.target.value})}>
-                        {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
-                          <>
-                            <optgroup label="Produtos">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
-                            {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un)</option>)}</optgroup>}
-                          </>
-                        )}
-                      </select>
-                      <div className="flex items-end gap-2 mb-2">
-                         <div className="flex-1">
-                           <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Quantidade</label>
-                           <input type="number" min="1" className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded-lg outline-none text-center" value={newReservation.quantity} onChange={e => setNewReservation({...newReservation, quantity: e.target.value})} />
-                         </div>
-                         <button type="button" onClick={handleAddToCartReservation} className="bg-amber-500 text-amber-950 px-4 py-2 rounded-lg font-bold text-sm hover:bg-amber-400 transition-colors">+ Adicionar</button>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 mt-2">Observações</label>
-                        <input type="text" className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded-lg outline-none text-sm" value={newReservation.observation} onChange={e => setNewReservation({...newReservation, observation: e.target.value})} placeholder="Opcional..." />
-                      </div>
-                    </div>
-
-                    {reservationCart.length > 0 && (
-                      <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-xl text-sm border border-gray-200 dark:border-gray-700">
-                        <p className="font-bold text-gray-700 dark:text-gray-300 mb-2">Itens na Encomenda:</p>
-                        {reservationCart.map((item, i) => (
-                          <div key={i} className="flex justify-between items-center text-gray-600 dark:text-gray-400 mb-1 pb-1 border-b border-gray-200 dark:border-gray-700 last:border-0">
-                            <div className="flex flex-col">
-                               <span>{item.quantity}x {item.productName}</span>
-                               {item.observation && <span className="text-[10px] italic">Obs: {item.observation}</span>}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">R$ {item.expectedRevenue.toFixed(2)}</span>
-                              <button type="button" onClick={() => setReservationCart(reservationCart.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500"><Trash2 size={14}/></button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <button type="submit" className="w-full bg-amber-600 dark:bg-amber-700 text-white py-3 rounded-xl hover:bg-amber-700 dark:hover:bg-amber-600 transition font-bold mt-auto shadow-sm">Guardar Encomenda Completa</button>
-                  </form>
-                </div>
-
-                <div className="lg:col-span-2 space-y-6">
-                  {/* SEÇÃO 1: PENDENTES */}
-                  <div className="bg-amber-50/50 dark:bg-gray-800 rounded-2xl shadow-sm border-2 border-amber-200 dark:border-amber-700/50 overflow-hidden transition-colors">
-                    <div className="p-4 border-b border-amber-200 dark:border-amber-700/50 bg-amber-100/50 dark:bg-amber-900/30 flex justify-between items-center">
-                       <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2"><Clock size={18}/> Encomendas Pendentes</h3>
-                       <div className="flex items-center gap-2">
-                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-amber-700 dark:text-amber-500 hidden sm:block">Filtrar por:</span>
-                         <select className="text-xs bg-transparent outline-none font-bold text-amber-900 dark:text-amber-200 cursor-pointer" value={reservationSortBy} onChange={e => setReservationSortBy(e.target.value)}>
-                           <option value="date-asc">Data ⬆</option>
-                           <option value="date-desc">Data ⬇</option>
-                           <option value="name-asc">Nome Cliente (A-Z)</option>
-                           <option value="product-asc">Produto (A-Z)</option>
-                         </select>
-                       </div>
-                    </div>
-                    <div className="overflow-x-auto max-h-[400px]">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-white/50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs border-b border-amber-100 dark:border-gray-700">
-                            <th className="p-3 font-semibold">Cliente & Pedido</th>
-                            <th className="p-3 font-semibold text-center">Data</th>
-                            <th className="p-3 font-semibold text-right">Valor</th>
-                            <th className="p-3 font-semibold text-center">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {sortedReservations.pending.length === 0 ? (
-                            <tr><td colSpan="4" className="p-6 text-center text-sm text-gray-500">Tudo limpo por aqui!</td></tr>
-                          ) : sortedReservations.pending.map((res) => (
-                            <tr key={res.id} className="border-b border-amber-50 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-750 transition-colors">
-                              <td className="p-3">
-                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{res.name}</p>
-                                
-                                {/* A NOVA FORMA ELEGANTE DE MOSTRAR AS OBSERVAÇÕES */}
-                                <div className="flex flex-col gap-1 mt-0.5">
-                                  <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{res.quantity}x {res.productName}</p>
-                                  {res.observation && (
-                                    <span 
-                                      className="inline-flex items-center gap-1 w-fit bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-2 py-1 rounded-md text-[10px] cursor-help font-bold border border-amber-200 dark:border-amber-700/50"
-                                      title={res.observation}
-                                    >
-                                      <Info size={12} /> Obs. do Pedido
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="p-3 text-center text-xs font-bold text-amber-700 dark:text-amber-500">{res.date ? new Date(res.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}</td>
-                              <td className="p-3 text-right text-sm font-bold text-gray-700 dark:text-gray-300">R$ {(Number(res.expectedRevenue)||0).toFixed(2)}</td>
-                              <td className="p-3 text-center flex items-center justify-center gap-1 mt-2">
-                                <button onClick={() => handleUpdateReservationStatus(res.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Concluir (Envia Venda)"><CheckCircle size={18}/></button>
-                                <button onClick={() => {
-                                  const referrer = customers.find(c => c.id === res.referredBy);
-                                  setEditingReservation({...res, referredByInput: referrer ? referrer.name : ''});
-                                }} className="text-amber-600 hover:bg-amber-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Editar"><Edit size={16}/></button>
-                                <button onClick={() => handleUpdateReservationStatus(res.id, 'cancelled')} className="text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Cancelar"><XCircle size={18}/></button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* SEÇÃO 2: HISTÓRICO (Efetivadas/Canceladas) */}
-                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors opacity-80 hover:opacity-100">
-                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                       <h3 className="font-bold text-gray-600 dark:text-gray-400 flex items-center gap-2 text-sm"><History size={16}/> Histórico de Encomendas</h3>
-                    </div>
-                    <div className="overflow-x-auto max-h-[250px]">
-                      <table className="w-full text-left border-collapse">
-                        <tbody>
-                          {sortedReservations.past.length === 0 ? (
-                            <tr><td className="p-4 text-center text-xs text-gray-400">Nenhum histórico.</td></tr>
-                          ) : sortedReservations.past.map((res) => (
-                            <tr key={res.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-3">
-                                <p className="font-medium text-xs text-gray-700 dark:text-gray-300">{res.name} <span className="text-gray-400">({res.quantity}x {res.productName})</span></p>
-                              </td>
-                              <td className="p-3 text-center">
-                                {res.status === 'completed' ? <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">Concluída</span> : <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Cancelada</span>}
-                              </td>
-                              <td className="p-3 text-right">
-                                <button onClick={() => {
-                                  const referrer = customers.find(c => c.id === res.referredBy);
-                                  setEditingReservation({...res, referredByInput: referrer ? referrer.name : ''});
-                                }} className="text-gray-400 hover:text-amber-500 p-1 rounded" title="Editar Histórico"><Edit size={14}/></button>
-                                <button onClick={() => handleDeleteReservation(res.id)} className="text-gray-400 hover:text-red-500 p-1 rounded" title="Excluir Definitivamente"><Trash2 size={14}/></button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
                 </div>
               </div>
             </div>
