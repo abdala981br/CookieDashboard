@@ -45,6 +45,34 @@ const getTodayYMD = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
+// --- COMPONENTE EXTRA: NODE DA REDE DE INDICAÇÕES ---
+// Movido para fora para evitar re-renderizações e erros de estado
+const NetworkNode = ({ customer, customers, isRoot = false }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const children = customers.filter(c => c.referredBy === customer.id);
+  const hasChildren = children.length > 0;
+  return (
+    <div className={`relative ${!isRoot ? 'ml-8 mt-4' : 'mb-8'}`}>
+      {!isRoot && ( <><div className="absolute -left-6 top-6 w-6 border-t-2 border-amber-200 dark:border-gray-600"></div><div className="absolute -left-6 -top-4 h-10 border-l-2 border-amber-200 dark:border-gray-600"></div></> )}
+      <div onClick={() => hasChildren && setIsExpanded(!isExpanded)} className={`flex items-center gap-3 p-3 rounded-xl shadow-sm w-fit z-10 relative transition-colors ${isRoot ? 'bg-amber-50 dark:bg-amber-900/30 border-2 border-amber-200 dark:border-amber-700/50 hover:bg-amber-100 dark:hover:bg-amber-900/50' : 'bg-white dark:bg-gray-800 border border-amber-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'} ${hasChildren ? 'cursor-pointer' : ''}`}>
+        <div className={`p-2 rounded-full ${isRoot ? 'bg-amber-600 text-white' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'}`}>
+          {isRoot ? <Network size={20} /> : <Cookie size={20} />}
+        </div>
+        <div>
+          <p className={`font-bold ${isRoot ? 'text-gray-900 dark:text-gray-100' : 'text-gray-800 dark:text-gray-200'}`}>{customer.name || 'Desconhecido'}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+            {isRoot && <span className="text-amber-700 dark:text-amber-400 mr-1">Iniciador •</span>}
+            {customer.purchases || 0} pedidos {hasChildren && `• ${children.length} indicações`}
+          </p>
+        </div>
+        {hasChildren && (<div className="ml-2 text-amber-600 dark:text-amber-400">{isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}</div>)}
+      </div>
+      {hasChildren && isExpanded && (<div className="relative border-l-2 border-amber-200 dark:border-gray-600 ml-[1.5rem] mt-2">{children.map(child => <NetworkNode key={child.id} customer={child} customers={customers} />)}</div>)}
+    </div>
+  );
+};
+
+
 export default function CookieDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
@@ -188,14 +216,14 @@ export default function CookieDashboard() {
 
   // --- LISTA DE CLIENTES ALFABÉTICA (Para a busca digitável) ---
   const sortedCustomersAlpha = useMemo(() => {
-    return [...customers].sort((a, b) => a.name.localeCompare(b.name));
+    return [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [customers]);
 
   // --- CÁLCULOS DA FICHA TÉCNICA E CUSTOS ---
   const costMetrics = useMemo(() => {
-    const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((ing.bulkPrice / ing.bulkQty) * ing.recipeQty), 0);
+    const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((Number(ing.bulkPrice) || 0) / (Number(ing.bulkQty) || 1)) * (Number(ing.recipeQty) || 0), 0);
     const costPerCookie = totalRecipeCost / (recipeConfig.yield || 1);
-    const profit = recipeConfig.salePrice - costPerCookie;
+    const profit = (recipeConfig.salePrice || 0) - costPerCookie;
     const profitMargin = recipeConfig.salePrice > 0 ? (profit / recipeConfig.salePrice) * 100 : 0;
     return { totalRecipeCost, costPerCookie, profit, profitMargin };
   }, [ingredients, recipeConfig]);
@@ -204,19 +232,20 @@ export default function CookieDashboard() {
   const inventoryCheck = useMemo(() => {
     const list = ingredients.map(ing => {
       const wasteFactor = ing.applyWaste ? 1.02 : 1; 
-      const totalNeeded = (ing.recipeQty * wasteFactor) * productionBatches;
+      const totalNeeded = ((Number(ing.recipeQty) || 0) * wasteFactor) * productionBatches;
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
       
       let packagesToBuy = 0;
       let costToBuy = 0;
       let exactMissingToBuy = 0;
+      const safeBulkQty = Number(ing.bulkQty) || 1;
 
-      if (missingAmount > 0 && ing.bulkQty > 0) {
+      if (missingAmount > 0 && safeBulkQty > 0) {
           const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
-          packagesToBuy = Math.ceil(safeMissingAmount / ing.bulkQty);
-          costToBuy = packagesToBuy * ing.bulkPrice;
-          exactMissingToBuy = packagesToBuy * ing.bulkQty;
+          packagesToBuy = Math.ceil(safeMissingAmount / safeBulkQty);
+          costToBuy = packagesToBuy * (Number(ing.bulkPrice) || 0);
+          exactMissingToBuy = packagesToBuy * safeBulkQty;
       }
 
       return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, wasteFactor };
@@ -229,13 +258,15 @@ export default function CookieDashboard() {
   const missingCostForOneBatch = useMemo(() => {
     return ingredients.reduce((sum, ing) => {
       const wasteFactor = ing.applyWaste ? 1.02 : 1; 
-      const totalNeeded = (ing.recipeQty * wasteFactor) * 1; 
+      const totalNeeded = ((Number(ing.recipeQty) || 0) * wasteFactor) * 1; 
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
       let costToBuy = 0;
-      if (missingAmount > 0 && ing.bulkQty > 0) {
+      const safeBulkQty = Number(ing.bulkQty) || 1;
+      
+      if (missingAmount > 0 && safeBulkQty > 0) {
           const safeMissingAmount = Math.round(missingAmount * 1000) / 1000;
-          costToBuy = Math.ceil(safeMissingAmount / ing.bulkQty) * ing.bulkPrice;
+          costToBuy = Math.ceil(safeMissingAmount / safeBulkQty) * (Number(ing.bulkPrice) || 0);
       }
       return sum + costToBuy;
     }, 0);
@@ -244,8 +275,8 @@ export default function CookieDashboard() {
   // --- 🧠 MÓDULO INTELIGÊNCIA DE NEGÓCIO (BI) ---
   
   const globalMetrics = useMemo(() => {
-    const totalRevenue = sales.reduce((acc, curr) => acc + curr.revenue, 0);
-    const totalCookiesSold = sales.reduce((acc, curr) => acc + (curr.cookieUnits || curr.quantity), 0);
+    const totalRevenue = sales.reduce((acc, curr) => acc + (Number(curr.revenue) || 0), 0);
+    const totalCookiesSold = sales.reduce((acc, curr) => acc + (Number(curr.cookieUnits) || Number(curr.quantity) || 0), 0);
     const totalEstimatedCost = totalCookiesSold * costMetrics.costPerCookie;
     const totalEstimatedProfit = totalRevenue - totalEstimatedCost;
     return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit };
@@ -263,13 +294,16 @@ export default function CookieDashboard() {
     sales.forEach(s => {
       if (!s.date) return;
       const d = new Date(s.date);
+      if (isNaN(d.getTime())) return;
+      
       const localD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const rev = Number(s.revenue) || 0;
       
-      if (localD.getTime() === today.getTime()) revToday += s.revenue;
-      else if (localD.getTime() === yesterday.getTime()) revYesterday += s.revenue;
+      if (localD.getTime() === today.getTime()) revToday += rev;
+      else if (localD.getTime() === yesterday.getTime()) revYesterday += rev;
       
-      if (localD >= last7Days && localD <= today) rev7Days += s.revenue;
-      else if (localD >= previous7Days && localD < last7Days) revPrev7Days += s.revenue;
+      if (localD >= last7Days && localD <= today) rev7Days += rev;
+      else if (localD >= previous7Days && localD < last7Days) revPrev7Days += rev;
     });
 
     const todayGrowth = revYesterday === 0 ? (revToday > 0 ? 100 : 0) : ((revToday - revYesterday) / revYesterday) * 100;
@@ -302,11 +336,15 @@ export default function CookieDashboard() {
     sales.forEach(sale => {
       if (!sale.date) return;
       const saleDate = new Date(sale.date);
+      if (isNaN(saleDate.getTime())) return;
+      
       const week = stats.find(w => saleDate >= w.start && saleDate <= w.end);
       if (week) {
-        week.salesQty += (sale.cookieUnits || sale.quantity);
-        week.revenue += sale.revenue;
-        week.estimatedProfit += (sale.revenue - (costMetrics.costPerCookie * (sale.cookieUnits || sale.quantity)));
+        const qty = Number(sale.cookieUnits) || Number(sale.quantity) || 0;
+        const rev = Number(sale.revenue) || 0;
+        week.salesQty += qty;
+        week.revenue += rev;
+        week.estimatedProfit += (rev - (costMetrics.costPerCookie * qty));
       }
     });
     return stats;
@@ -316,8 +354,8 @@ export default function CookieDashboard() {
     if (products.length === 0 || sales.length === 0) return null;
     const pStats = products.map(p => {
       const s = sales.filter(sale => sale.productId === p.id || sale.productName === p.name);
-      const qty = s.reduce((a,b)=>a+(b.cookieUnits||b.quantity),0);
-      const rev = s.reduce((a,b)=>a+b.revenue,0);
+      const qty = s.reduce((a,b)=>a+(Number(b.cookieUnits)||Number(b.quantity)||0),0);
+      const rev = s.reduce((a,b)=>a+(Number(b.revenue)||0),0);
       const profit = rev - (qty * costMetrics.costPerCookie);
       return { name: p.name, qty, profit };
     });
@@ -327,8 +365,8 @@ export default function CookieDashboard() {
   }, [sales, products, costMetrics]);
 
   const customerIntel = useMemo(() => {
-    const novos = customers.filter(c => c.purchases === 1).length;
-    const recorrentes = customers.filter(c => c.purchases > 1).length;
+    const novos = customers.filter(c => (Number(c.purchases) || 0) === 1).length;
+    const recorrentes = customers.filter(c => (Number(c.purchases) || 0) > 1).length;
     const total = novos + recorrentes;
     const recorrentesPercent = total > 0 ? (recorrentes / total) * 100 : 0;
     return { novos, recorrentes, recorrentesPercent };
@@ -336,7 +374,7 @@ export default function CookieDashboard() {
 
   const projection = useMemo(() => {
     const currentMonth = new Date().getMonth();
-    const revThisMonth = sales.filter(s => s.date && new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
+    const revThisMonth = sales.filter(s => s.date && new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+(Number(b.revenue)||0), 0);
     const daysPassed = Math.max(1, new Date().getDate());
     const daysInMonth = new Date(new Date().getFullYear(), currentMonth + 1, 0).getDate();
     return (revThisMonth / daysPassed) * daysInMonth;
@@ -346,9 +384,9 @@ export default function CookieDashboard() {
   const sortedReservations = useMemo(() => {
     let sorted = [...reservations];
     switch(reservationSortBy) {
-      case 'date-asc': sorted.sort((a, b) => new Date(a.date || '9999-12-31') - new Date(b.date || '9999-12-31')); break;
-      case 'date-desc': sorted.sort((a, b) => new Date(b.date || '1970-01-01') - new Date(a.date || '1970-01-01')); break;
-      case 'name-asc': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
+      case 'date-asc': sorted.sort((a, b) => new Date(a.date || '9999-12-31').getTime() - new Date(b.date || '9999-12-31').getTime()); break;
+      case 'date-desc': sorted.sort((a, b) => new Date(b.date || '1970-01-01').getTime() - new Date(a.date || '1970-01-01').getTime()); break;
+      case 'name-asc': sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '')); break;
       default: break;
     }
     return {
@@ -359,42 +397,17 @@ export default function CookieDashboard() {
 
   const expectedMetrics = useMemo(() => {
     let revenue = 0; let cookies = 0;
-    sortedReservations.pending.forEach(r => { revenue += r.expectedRevenue || 0; cookies += r.cookieUnits || r.quantity || 0; });
+    sortedReservations.pending.forEach(r => { revenue += Number(r.expectedRevenue) || 0; cookies += Number(r.cookieUnits) || Number(r.quantity) || 0; });
     const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
     return { revenue, cookies, batchesNeeded };
   }, [sortedReservations.pending, recipeConfig.yield]);
-
-  const handleUpdateStock = (id, val) => {
-    const newStock = parseFloat(val) || 0;
-    const item = ingredients.find(i => i.id === id);
-    if(item && user) saveToDb('ingredients', id, { ...item, currentStock: newStock });
-  };
-
-  const handleToggleWaste = (id, currentVal) => {
-    const item = ingredients.find(i => i.id === id);
-    if(item && user) saveToDb('ingredients', id, { ...item, applyWaste: !currentVal });
-  };
-
-  const handleProduce = () => {
-    ingredients.forEach(ing => {
-      const itemCheck = inventoryCheck.list.find(i => i.id === ing.id);
-      if(itemCheck) {
-        let current = parseFloat(ing.currentStock) || 0;
-        if (itemCheck.packagesToBuy > 0) current += itemCheck.exactMissingToBuy;
-        const newStock = Math.max(0, current - itemCheck.totalNeeded);
-        if(user) saveToDb('ingredients', ing.id, { ...ing, currentStock: newStock });
-      }
-    });
-    setProductionBatches(1);
-    alert("Produção registada com sucesso! O estoque foi deduzido.");
-  };
 
   // --- CÁLCULOS DE CLIENTES ---
   const customersWithStats = useMemo(() => {
     return customers.map(customer => {
       const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
       const referrer = customers.find(c => c.id === customer.referredBy);
-      return { ...customer, referralsCount, referrerName: referrer ? referrer.name : 'Ninguém (Direto)' };
+      return { ...customer, referralsCount, referrerName: referrer ? (referrer.name || 'Desconhecido') : 'Ninguém (Direto)' };
     });
   }, [customers]);
 
@@ -405,14 +418,18 @@ export default function CookieDashboard() {
   const sortedCustomersWithStats = useMemo(() => {
     let sorted = [...customersWithStats];
     switch(customerSortBy) {
-      case 'name-asc': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
-      case 'name-desc': sorted.sort((a, b) => b.name.localeCompare(a.name)); break;
+      case 'name-asc': sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '')); break;
+      case 'name-desc': sorted.sort((a, b) => (b.name || '').localeCompare(a.name || '')); break;
       case 'referrals-desc': sorted.sort((a, b) => b.referralsCount - a.referralsCount); break;
-      case 'purchases-desc': sorted.sort((a, b) => b.purchases - a.purchases); break;
+      case 'purchases-desc': sorted.sort((a, b) => (Number(b.purchases)||0) - (Number(a.purchases)||0)); break;
       default: break;
     }
     return sorted;
   }, [customersWithStats, customerSortBy]);
+
+  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
+  const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10);
+  const rootCustomers = customers.filter(c => !c.referredBy);
 
   // ==========================================
   // HANDLERS DE FORMULÁRIO (VENDAS E RESERVAS)
@@ -454,13 +471,13 @@ export default function CookieDashboard() {
     const todayYMD = getTodayYMD();
     let saleDateIso = new Date().toISOString();
     if (quickSale.date && quickSale.date !== todayYMD) {
-      saleDateIso = new Date(`${quickSale.date}T12:00:00`).toISOString();
+      const parsedDate = new Date(`${quickSale.date}T12:00:00`);
+      if (!isNaN(parsedDate.getTime())) saleDateIso = parsedDate.toISOString();
     }
 
-    // Traduz o input de Indicação para ID real se existir
     let finalReferredBy = null;
     if (quickSale.referredByInput) {
-       const found = customers.find(c => c.name.toLowerCase() === quickSale.referredByInput.toLowerCase().trim());
+       const found = customers.find(c => (c.name || '').toLowerCase() === quickSale.referredByInput.toLowerCase().trim());
        if (found) finalReferredBy = found.id;
     }
 
@@ -473,8 +490,8 @@ export default function CookieDashboard() {
       });
     });
 
-    const existingCustomer = customers.find(c => c.name.toLowerCase() === quickSale.customerName.toLowerCase().trim());
-    if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
+    const existingCustomer = customers.find(c => (c.name || '').toLowerCase() === quickSale.customerName.toLowerCase().trim());
+    if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: (Number(existingCustomer.purchases) || 0) + 1 });
     else {
       const newCustId = Math.random().toString(36).substr(2, 9);
       saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: finalReferredBy, purchases: 1 });
@@ -519,7 +536,7 @@ export default function CookieDashboard() {
 
     let finalReferredBy = null;
     if (newReservation.referredByInput) {
-       const found = customers.find(c => c.name.toLowerCase() === newReservation.referredByInput.toLowerCase().trim());
+       const found = customers.find(c => (c.name || '').toLowerCase() === newReservation.referredByInput.toLowerCase().trim());
        if (found) finalReferredBy = found.id;
     }
 
@@ -544,11 +561,11 @@ export default function CookieDashboard() {
       if (status === 'completed' && r.status !== 'completed') {
           const newSaleId = Math.random().toString(36).substr(2, 9);
           saveToDb('sales', newSaleId, { id: newSaleId, date: new Date().toISOString(), quantity: r.quantity, cookieUnits: r.cookieUnits, revenue: r.expectedRevenue, customerName: r.name, productName: r.productName, observation: r.observation || '' });
-          const existingCustomer = customers.find(c => c.name.toLowerCase() === r.name.toLowerCase().trim());
-          if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
+          const existingCustomer = customers.find(c => (c.name || '').toLowerCase() === (r.name || '').toLowerCase().trim());
+          if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: (Number(existingCustomer.purchases) || 0) + 1 });
           else {
               const newCustId = Math.random().toString(36).substr(2, 9);
-              saveToDb('customers', newCustId, { id: newCustId, name: r.name.trim(), referredBy: r.referredBy || null, purchases: 1 });
+              saveToDb('customers', newCustId, { id: newCustId, name: (r.name || '').trim(), referredBy: r.referredBy || null, purchases: 1 });
           }
       }
     }
@@ -562,7 +579,7 @@ export default function CookieDashboard() {
     if (!editingCustomer || !user) return;
     saveToDb('customers', editingCustomer.id, {
       ...editingCustomer,
-      purchases: Number(editingCustomer.purchases)
+      purchases: Number(editingCustomer.purchases) || 0
     });
     setEditingCustomer(null);
   };
@@ -572,16 +589,15 @@ export default function CookieDashboard() {
     if (!editingReservation || !user) return;
     saveToDb('reservations', editingReservation.id, {
       ...editingReservation,
-      quantity: Number(editingReservation.quantity),
-      expectedRevenue: Number(editingReservation.expectedRevenue),
-      cookieUnits: Number(editingReservation.cookieUnits)
+      quantity: Number(editingReservation.quantity) || 1,
+      expectedRevenue: Number(editingReservation.expectedRevenue) || 0,
+      cookieUnits: Number(editingReservation.cookieUnits) || 1
     });
     setEditingReservation(null);
   };
 
   const handleEditReservationChange = (field, value) => {
     let updated = { ...editingReservation, [field]: value };
-    // Se mudar o produto ou quantidade, auto-recalcula o lucro e unidades
     if (field === 'productId' || field === 'quantity') {
       const p = products.find(prod => prod.id === updated.productId);
       if (p) {
@@ -647,7 +663,7 @@ export default function CookieDashboard() {
             }
           }
           
-          const existingItem = ingredients.find(old => old.name.toLowerCase() === name.toLowerCase());
+          const existingItem = ingredients.find(old => (old.name||'').toLowerCase() === name.toLowerCase());
           const currentStock = existingItem ? (existingItem.currentStock || 0) : 0;
           
           const unitLower = (clean(row[unitIdx]) || 'un').toLowerCase();
@@ -674,17 +690,11 @@ export default function CookieDashboard() {
     } finally { setIsSyncing(false); }
   };
 
-  const handleDeleteCustomer = (id) => {
-    if (!user) return;
-    deleteFromDb('customers', id);
-    customers.forEach(c => { if (c.referredBy === id) saveToDb('customers', c.id, { ...c, referredBy: null }); });
-  };
-
   const handleAddSuggestion = (e) => {
     e.preventDefault();
     if (!newSuggestion.text || !user) return;
     const normalizedInput = newSuggestion.text.toLowerCase().trim();
-    const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text.toLowerCase().includes(normalizedInput) || normalizedInput.includes(s.text.toLowerCase())));
+    const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text || '').toLowerCase().includes(normalizedInput));
     if (matches.length > 0 && !suggestionMatchContext) { setSuggestionMatchContext({ pendingSuggestion: newSuggestion, match: matches[0] }); return; }
     proceedAddSuggestion();
   };
@@ -699,31 +709,6 @@ export default function CookieDashboard() {
   const handleDeleteSuggestion = (id) => user && deleteFromDb('suggestions', id);
   const handleToggleFavorite = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, isFavorite: !s.isFavorite }); };
   const handleUpvoteSuggestion = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 }); };
-
-  const NetworkNode = ({ customer, isRoot = false }) => {
-    const [isExpanded, setIsExpanded] = useState(false);
-    const children = customers.filter(c => c.referredBy === customer.id);
-    const hasChildren = children.length > 0;
-    return (
-      <div className={`relative ${!isRoot ? 'ml-8 mt-4' : 'mb-8'}`}>
-        {!isRoot && ( <><div className="absolute -left-6 top-6 w-6 border-t-2 border-amber-200 dark:border-gray-600"></div><div className="absolute -left-6 -top-4 h-10 border-l-2 border-amber-200 dark:border-gray-600"></div></> )}
-        <div onClick={() => hasChildren && setIsExpanded(!isExpanded)} className={`flex items-center gap-3 p-3 rounded-xl shadow-sm w-fit z-10 relative transition-colors ${isRoot ? 'bg-amber-50 dark:bg-amber-900/30 border-2 border-amber-200 dark:border-amber-700/50 hover:bg-amber-100 dark:hover:bg-amber-900/50' : 'bg-white dark:bg-gray-800 border border-amber-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'} ${hasChildren ? 'cursor-pointer' : ''}`}>
-          <div className={`p-2 rounded-full ${isRoot ? 'bg-amber-600 text-white' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'}`}>
-            {isRoot ? <Network size={20} /> : <Cookie size={20} />}
-          </div>
-          <div>
-            <p className={`font-bold ${isRoot ? 'text-gray-900 dark:text-gray-100' : 'text-gray-800 dark:text-gray-200'}`}>{customer.name}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-              {isRoot && <span className="text-amber-700 dark:text-amber-400 mr-1">Iniciador •</span>}
-              {customer.purchases} pedidos {hasChildren && `• ${children.length} indicações`}
-            </p>
-          </div>
-          {hasChildren && (<div className="ml-2 text-amber-600 dark:text-amber-400">{isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}</div>)}
-        </div>
-        {hasChildren && isExpanded && (<div className="relative border-l-2 border-amber-200 dark:border-gray-600 ml-[1.5rem] mt-2">{children.map(child => <NetworkNode key={child.id} customer={child} />)}</div>)}
-      </div>
-    );
-  };
 
   // ==========================================
   // RENDERIZAÇÕES PRINCIPAIS (TELA DE LOGIN E DASHBOARD)
@@ -1093,7 +1078,7 @@ export default function CookieDashboard() {
                           ))}
                           <div className="pt-2 mt-1 font-bold text-white flex justify-between text-base">
                              <span>Total:</span>
-                             <span>R$ {(quickSaleCart.reduce((a,b)=>a+b.revenue, 0) + (quickSale.quantity > 0 && quickSale.revenue > 0 && !quickSaleCart.find(i=>i.productId===quickSale.productId && i.quantity===quickSale.quantity) ? quickSale.revenue : 0)).toFixed(2)}</span>
+                             <span>R$ {(quickSaleCart.reduce((a,b)=>a+(Number(b.revenue)||0), 0) + (quickSale.quantity > 0 && quickSale.revenue > 0 && !quickSaleCart.find(i=>i.productId===quickSale.productId && i.quantity===quickSale.quantity) ? Number(quickSale.revenue) : 0)).toFixed(2)}</span>
                           </div>
                         </div>
                       )}
@@ -1166,7 +1151,6 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
-                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1179,7 +1163,6 @@ export default function CookieDashboard() {
                       const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
                       return (
                         <div key={index} className="flex flex-col items-center flex-1 group z-10 h-[200px] justify-end">
-                          {/* GRÁFICO DE BARRAS DUPLAS LADO A LADO */}
                           <div className="w-full relative h-[180px] flex items-end justify-center gap-1 sm:gap-2">
                             
                             <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%`, minHeight: data.revenue > 0 ? '8px' : '0' }}></div>
@@ -1521,10 +1504,10 @@ export default function CookieDashboard() {
                       </thead>
                       <tbody>
                         {ingredients.map((ing) => {
-                          const ingCost = (ing.bulkPrice / ing.bulkQty) * ing.recipeQty;
+                          const ingCost = (Number(ing.bulkPrice||0) / Number(ing.bulkQty||1)) * Number(ing.recipeQty||0);
                           return (
                             <tr key={ing.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{ing.name}</td><td className="p-4 text-gray-600 dark:text-gray-400">R$ {ing.bulkPrice.toFixed(2)}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.bulkQty} {ing.unit}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.recipeQty} {ing.unit}</td><td className="p-4 text-right font-medium text-amber-700 dark:text-amber-400">R$ {ingCost.toFixed(2)}</td>
+                              <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{ing.name}</td><td className="p-4 text-gray-600 dark:text-gray-400">R$ {Number(ing.bulkPrice||0).toFixed(2)}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.bulkQty} {ing.unit}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.recipeQty} {ing.unit}</td><td className="p-4 text-right font-medium text-amber-700 dark:text-amber-400">R$ {ingCost.toFixed(2)}</td>
                             </tr>
                           );
                         })}
@@ -1564,10 +1547,10 @@ export default function CookieDashboard() {
                         <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhum cliente na base. Registe vendas na aba Visão Geral!</td></tr>
                       ) : sortedCustomersWithStats.map((customer) => (
                         <tr key={customer.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                          <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{customer.name}</td>
+                          <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{customer.name || 'Sem nome'}</td>
                           <td className="p-4 text-gray-600 dark:text-gray-400 text-sm">{customer.referrerName}</td>
                           <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>{customer.referralsCount}</span></td>
-                          <td className="p-4 text-center font-medium text-amber-700 dark:text-amber-400">{customer.purchases}</td>
+                          <td className="p-4 text-center font-medium text-amber-700 dark:text-amber-400">{customer.purchases || 0}</td>
                           <td className="p-4 text-center flex items-center justify-center gap-2">
                              <button onClick={() => setEditingCustomer(customer)} className="p-2 text-amber-500 hover:bg-amber-50 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
                              <button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button>
@@ -1686,7 +1669,7 @@ export default function CookieDashboard() {
                                 {res.observation && <p className="text-[10px] text-amber-600 dark:text-amber-400 italic mt-0.5">Obs: {res.observation}</p>}
                               </td>
                               <td className="p-3 text-center text-xs font-bold text-amber-700 dark:text-amber-500">{res.date ? new Date(res.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}</td>
-                              <td className="p-3 text-right text-sm font-bold text-gray-700 dark:text-gray-300">R$ {res.expectedRevenue?.toFixed(2)}</td>
+                              <td className="p-3 text-right text-sm font-bold text-gray-700 dark:text-gray-300">R$ {(Number(res.expectedRevenue)||0).toFixed(2)}</td>
                               <td className="p-3 text-center flex items-center justify-center gap-1 mt-2">
                                 <button onClick={() => handleUpdateReservationStatus(res.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Concluir (Envia Venda)"><CheckCircle size={18}/></button>
                                 <button onClick={() => setEditingReservation(res)} className="text-amber-600 hover:bg-amber-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Editar"><Edit size={16}/></button>
@@ -1746,7 +1729,7 @@ export default function CookieDashboard() {
                     <p className="text-gray-500 dark:text-gray-400 text-center mt-10">Nenhum cliente cadastrado ainda.</p>
                   ) : (
                     rootCustomers.map(root => (
-                      <NetworkNode key={root.id} customer={root} isRoot={true} />
+                      <NetworkNode key={root.id} customer={root} customers={customers} isRoot={true} />
                     ))
                   )}
                 </div>
