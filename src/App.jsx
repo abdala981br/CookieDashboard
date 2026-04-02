@@ -12,7 +12,7 @@ import {
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
   AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
-  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit, Store, Send
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit, Store, Send, Eye, EyeOff, MessageSquarePlus, ShieldAlert
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -31,15 +31,13 @@ const appId = 'cookie-dash-app';
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  // Força Long Polling para contornar bloqueios de navegadores (Opera/Brave)
   db = initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch (e) { console.error("Erro ao iniciar Firebase:", e); }
 
 const INITIAL_PRODUCTS = [
-  { id: 'prod-1', name: 'Cookie Tradicional', price: 10.00, type: 'single', units: 1 }
+  { id: 'prod-1', name: 'Cookie Tradicional', price: 10.00, type: 'single', units: 1, isVisible: true }
 ];
 
-// Helpers de Data
 const getTodayYMD = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -50,7 +48,6 @@ const getMaxDateYMD = (daysAdvance) => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
-// --- COMPONENTE: NODE DA REDE DE INDICAÇÕES ---
 const NetworkNode = ({ customer, customers, isRoot = false }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const children = customers.filter(c => c.referredBy === customer.id);
@@ -78,9 +75,7 @@ const NetworkNode = ({ customer, customers, isRoot = false }) => {
 
 
 export default function CookieDashboard() {
-  // ROTEAMENTO: 'loading', 'storefront', 'admin_login', 'dashboard'
   const [appMode, setAppMode] = useState('loading'); 
-  
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
   const [showFooterDetails, setShowFooterDetails] = useState(false);
@@ -92,16 +87,15 @@ export default function CookieDashboard() {
   const [authError, setAuthError] = useState('');
   const [resetMessage, setResetMessage] = useState('');
 
-  // ==========================================
-  // ESTADOS ADMIN (BANCO DE DADOS PRIVADO)
-  // ==========================================
+  // ESTADOS ADMIN
   const [customers, setCustomers] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [ingredients, setIngredients] = useState([]);
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
-  const [onlineOrders, setOnlineOrders] = useState([]); // Pedidos do WhatsApp!
+  const [onlineOrders, setOnlineOrders] = useState([]);
+  const [onlineSuggestions, setOnlineSuggestions] = useState([]); 
   
   const [recipeConfig, setRecipeConfig] = useState({ yield: 12, salePrice: 10.00 });
   const [goals, setGoals] = useState({ daily: 150, weekly: 1000 }); 
@@ -115,7 +109,6 @@ export default function CookieDashboard() {
   const [lastSync, setLastSync] = useState(null);
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
-  // Formulários Admin
   const [newSuggestion, setNewSuggestion] = useState({ type: 'flavor', text: '' });
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
   const [quickSale, setQuickSale] = useState({ customerName: '', referredByInput: '', productId: '', quantity: 1, revenue: 0, date: getTodayYMD(), observation: '' });
@@ -131,16 +124,15 @@ export default function CookieDashboard() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
 
-  // ==========================================
-  // ESTADOS PÚBLICOS (LOJA/STOREFRONT)
-  // ==========================================
+  // ESTADOS PÚBLICOS
   const [publicProducts, setPublicProducts] = useState([]);
   const [publicSettings, setPublicSettings] = useState({ isStoreOpen: false, closedMessage: 'Carregando Loja...', maxAdvanceDays: 14, whatsappNumber: '' });
+  const [publicCommunity, setPublicCommunity] = useState({ topReferrers: [], pendingRewards: [] });
   const [storeCart, setStoreCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã', address: '', itemObs: '' });
+  const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã', address: '', itemObs: '', acceptedPolicies: false });
+  const [pubSugData, setPubSugData] = useState({ name: '', text: '', type: 'flavor' });
 
-  // --- 1. MONITORIZAR AUTENTICAÇÃO E ROTAS ---
   useEffect(() => {
     if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -177,7 +169,6 @@ export default function CookieDashboard() {
 
   const handleLogout = () => signOut(auth);
 
-  // --- 2. DADOS PRIVADOS DO ADMIN ---
   useEffect(() => {
     if (!db || !user || user.isAnonymous) return;
     const uid = user.uid;
@@ -204,9 +195,11 @@ export default function CookieDashboard() {
          }
          setIsConfigLoaded(true);
       }, console.error),
-      // Lê os pedidos que vêm da loja online pública
       onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'online_orders'), snap => {
          setOnlineOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt)));
+      }, console.error),
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'online_suggestions'), snap => {
+         setOnlineSuggestions(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt)));
       }, console.error)
     ];
     return () => unsubs.forEach(fn => fn());
@@ -216,33 +209,49 @@ export default function CookieDashboard() {
   const deleteFromDb = async (col, id) => { if (db && user && !user.isAnonymous) await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, col, id)); };
   const saveConfig = async (data) => { if (db && user && !user.isAnonymous) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'config'), data, { merge: true }); };
 
-  // Sincroniza configurações privadas e PUBLICA o catálogo e estado da loja para o Storefront ver!
+  const customersWithStats = useMemo(() => {
+    return customers.map(customer => {
+      const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
+      const referrer = customers.find(c => c.id === customer.referredBy);
+      return { ...customer, referralsCount, referrerName: referrer ? (referrer.name || 'Desconhecido') : 'Ninguém (Direto)' };
+    });
+  }, [customers]);
+
+  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 3), [customersWithStats]);
+  const pendingRewards = useMemo(() => customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0)), [customersWithStats]);
+
   useEffect(() => { 
     if (db && user && !user.isAnonymous && isConfigLoaded) { 
       saveConfig({ recipeConfig, goals, sheetUrl, storeSettings }); 
-      // SYNC PÚBLICO
-      setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', 'items'), { products });
-      setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'info'), storeSettings);
+      setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'store', 'info'), { 
+          products, storeSettings,
+          topReferrers: topReferrers.map(c => ({ name: c.name, count: c.referralsCount })).filter(c => c.count > 0),
+          pendingRewards: pendingRewards.map(c => ({ name: c.name, count: c.referralsCount }))
+      });
     }
-  }, [recipeConfig, goals, sheetUrl, storeSettings, products, user, isConfigLoaded]);
+  }, [recipeConfig, goals, sheetUrl, storeSettings, products, topReferrers, pendingRewards, user, isConfigLoaded]);
 
-  // --- 3. LER DADOS PÚBLICOS (LOJA) ---
   useEffect(() => {
     if (db && user && (appMode === 'storefront' || appMode === 'dashboard')) {
-      const unsub1 = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', 'items'), snap => {
-         if (snap.exists()) setPublicProducts(snap.data().products || []);
+      const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'store', 'info'), snap => {
+         if (snap.exists()) {
+            const d = snap.data();
+            setPublicProducts((d.products || []).filter(p => p.isVisible !== false));
+            setPublicSettings(d.storeSettings || { isStoreOpen: false, closedMessage: 'Carregando Loja...', maxAdvanceDays: 14, whatsappNumber: '' });
+            setPublicCommunity({ topReferrers: d.topReferrers || [], pendingRewards: d.pendingRewards || [] });
+         }
       });
-      const unsub2 = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'info'), snap => {
-         if (snap.exists()) setPublicSettings(snap.data());
-      });
-      return () => { unsub1(); unsub2(); };
+      return () => unsub();
     }
   }, [user, appMode]);
 
-  // Efeitos secundários dos formulários
   useEffect(() => {
-    if (!quickSale.productId && products.length > 0) setQuickSale(prev => ({ ...prev, productId: products[0].id, revenue: products[0].price }));
-    else { const p = products.find(p => p.id === quickSale.productId); setQuickSale(prev => ({ ...prev, revenue: prev.quantity * (p ? p.price : recipeConfig.salePrice) })); }
+    if (!quickSale.productId && products.length > 0) {
+      setQuickSale(prev => ({ ...prev, productId: products[0].id, revenue: products[0].price }));
+    } else {
+      const p = products.find(p => p.id === quickSale.productId);
+      setQuickSale(prev => ({ ...prev, revenue: prev.quantity * (p ? p.price : recipeConfig.salePrice) }));
+    }
   }, [quickSale.quantity, quickSale.productId, products, recipeConfig.salePrice]);
 
   useEffect(() => {
@@ -251,7 +260,6 @@ export default function CookieDashboard() {
 
   const sortedCustomersAlpha = useMemo(() => [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [customers]);
 
-  // --- CÁLCULOS E INTELIGÊNCIA ---
   const costMetrics = useMemo(() => {
     const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((Number(ing.bulkPrice) || 0) / (Number(ing.bulkQty) || 1)) * (Number(ing.recipeQty) || 0), 0);
     const costPerCookie = totalRecipeCost / (Number(recipeConfig.yield) || 1);
@@ -447,17 +455,6 @@ export default function CookieDashboard() {
     alert("Produção registada com sucesso! O estoque foi deduzido.");
   };
 
-  // --- CÁLCULOS DE CLIENTES ---
-  const customersWithStats = useMemo(() => {
-    return customers.map(customer => {
-      const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
-      const referrer = customers.find(c => c.id === customer.referredBy);
-      return { ...customer, referralsCount, referrerName: referrer ? (referrer.name || 'Desconhecido') : 'Ninguém (Direto)' };
-    });
-  }, [customers]);
-
-  const pendingRewards = useMemo(() => customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0)), [customersWithStats]);
-
   const sortedCustomersWithStats = useMemo(() => {
     let sorted = [...customersWithStats];
     switch(customerSortBy) {
@@ -470,7 +467,6 @@ export default function CookieDashboard() {
     return sorted;
   }, [customersWithStats, customerSortBy]);
 
-  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
   const rootCustomers = useMemo(() => customers.filter(c => !c.referredBy), [customers]);
 
   // ==========================================
@@ -675,10 +671,15 @@ export default function CookieDashboard() {
   const handleAddProduct = (e) => {
     e.preventDefault(); if (!newProduct.name || !newProduct.price || !user) return;
     const newId = Math.random().toString(36).substr(2, 9);
-    saveToDb('products', newId, { id: newId, name: newProduct.name, price: Number(newProduct.price), type: newProduct.type, units: newProduct.type === 'combo' ? Number(newProduct.units) : 1 });
+    saveToDb('products', newId, { id: newId, name: newProduct.name, price: Number(newProduct.price), type: newProduct.type, units: newProduct.type === 'combo' ? Number(newProduct.units) : 1, isVisible: true });
     setNewProduct({ name: '', price: '', type: 'single', units: 2 });
   };
   const handleDeleteProduct = (id) => { if(user) deleteFromDb('products', id); };
+  
+  const handleToggleProductVisibility = (id, currentVis) => {
+    const p = products.find(x => x.id === id);
+    if(p && user) saveToDb('products', id, { ...p, isVisible: currentVis === undefined ? false : !currentVis });
+  };
 
   const handleSyncSheet = async () => {
     if (!sheetUrl) { alert("Por favor, cole o link da sua planilha."); return; }
@@ -770,6 +771,20 @@ export default function CookieDashboard() {
   const handleToggleFavorite = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, isFavorite: !s.isFavorite }); };
   const handleUpvoteSuggestion = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 }); };
 
+  // Ações do Admin para Sugestões do Público
+  const handleApprovePublicSuggestion = (pubSug, isMerge, targetId = null) => {
+    if (isMerge && targetId) {
+        const existing = suggestions.find(s => s.id === targetId);
+        if (existing) saveToDb('suggestions', existing.id, { ...existing, votes: (existing.votes || 0) + 1 });
+    } else {
+        const newId = Math.random().toString(36).substr(2, 9);
+        saveToDb('suggestions', newId, { id: newId, type: pubSug.type, text: pubSug.text, votes: 1, isFavorite: false });
+    }
+    deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_suggestions', pubSug.id));
+  };
+  const handleRejectPublicSuggestion = (id) => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_suggestions', id));
+
+
   // ==========================================
   // HANDLERS DA LOJA ONLINE PÚBLICA
   // ==========================================
@@ -785,12 +800,11 @@ export default function CookieDashboard() {
 
   const handleCheckoutPublic = async (e) => {
     e.preventDefault();
-    if (!checkoutData.name || storeCart.length === 0) return;
+    if (!checkoutData.name || storeCart.length === 0 || !checkoutData.acceptedPolicies) return;
 
     const total = storeCart.reduce((a,b)=>a+b.price*b.qty, 0);
     const orderId = Math.random().toString(36).substr(2, 9);
     
-    // Grava no banco de dados para o Admin aprovar
     const orderPayload = {
        customerName: checkoutData.name,
        referredByInput: checkoutData.referredBy,
@@ -806,8 +820,7 @@ export default function CookieDashboard() {
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_orders', orderId), orderPayload);
       
-      // Gera mensagem de WhatsApp
-      let msg = `*NOVO PEDIDO - COOKIEDASH* 🍪\n\n`;
+      let msg = `*NOVO PEDIDO - ABDOOKIES* 🍪\n\n`;
       msg += `*Cliente:* ${checkoutData.name}\n`;
       if (checkoutData.referredBy) msg += `*Indicado por:* ${checkoutData.referredBy}\n`;
       msg += `*Data:* ${new Date(checkoutData.date).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}\n`;
@@ -823,12 +836,20 @@ export default function CookieDashboard() {
       const waNumber = publicSettings.whatsappNumber ? publicSettings.whatsappNumber.replace(/\D/g, '') : '';
       window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`, '_blank');
       
-      setStoreCart([]);
-      setIsCartOpen(false);
+      setStoreCart([]); setIsCartOpen(false);
       alert('Seu pedido foi enviado para a nossa cozinha e também abriu no seu WhatsApp! Envie a mensagem para confirmar.');
-    } catch (err) {
-      alert('Erro ao enviar pedido. Tente novamente mais tarde.');
-    }
+    } catch (err) { alert('Erro ao enviar pedido. Tente novamente mais tarde.'); }
+  };
+
+  const handleSendPublicSuggestion = async (e) => {
+    e.preventDefault();
+    if (!pubSugData.text) return;
+    const id = Math.random().toString(36).substr(2, 9);
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_suggestions', id), { ...pubSugData, createdAt: new Date().toISOString() });
+      alert('Ideia enviada com sucesso! Muito obrigado pela ajuda.');
+      setPubSugData({ name: '', text: '', type: 'flavor' });
+    } catch (err) { alert('Erro ao enviar sugestão.'); }
   };
 
   // ==========================================
@@ -844,97 +865,162 @@ export default function CookieDashboard() {
   }
 
   // ==========================================
-  // RENDERIZAÇÃO: LOJA ONLINE (STOREFRONT)
+  // RENDERIZAÇÃO: LOJA ONLINE PÚBLICA (STOREFRONT)
   // ==========================================
   if (appMode === 'storefront') {
     return (
-      <div className="min-h-screen bg-orange-50 text-gray-800 font-sans pb-24">
+      <div className={`min-h-screen font-sans pb-24 transition-colors duration-300 ${darkMode ? 'dark bg-gray-950 text-gray-100' : 'bg-orange-50 text-gray-800'}`}>
          {/* CABEÇALHO */}
-         <header className="bg-amber-900 text-white p-4 sticky top-0 z-40 shadow-md">
+         <header className="bg-amber-900 dark:bg-black text-white p-4 sticky top-0 z-40 shadow-md transition-colors">
             <div className="max-w-5xl mx-auto flex justify-between items-center">
                <div className="flex items-center gap-2">
                  <Cookie size={28} className="text-amber-300" />
-                 <h1 className="text-xl font-bold tracking-tight">CookieDash</h1>
+                 <h1 className="text-xl font-bold tracking-tight">Abdookies</h1>
                </div>
-               <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors font-bold text-sm">
-                 <ShoppingCart size={18} /> Carrinho
-                 {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
-               </button>
+               <div className="flex items-center gap-3">
+                 <button onClick={() => setDarkMode(!darkMode)} className="text-amber-200 hover:text-white transition-colors p-1">
+                   {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+                 </button>
+                 <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors font-bold text-sm">
+                   <ShoppingCart size={18} /> <span className="hidden sm:inline">Carrinho</span>
+                   {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
+                 </button>
+               </div>
             </div>
          </header>
 
          {/* CORPO DA LOJA */}
-         <main className="max-w-5xl mx-auto p-4 mt-6">
+         <main className="max-w-5xl mx-auto p-4 mt-6 space-y-10">
             {!publicSettings.isStoreOpen ? (
-               <div className="bg-white p-8 rounded-3xl shadow-sm text-center border-2 border-amber-200 mt-10">
+               <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm text-center border-2 border-amber-200 dark:border-amber-900 mt-10 transition-colors">
                   <Store size={64} className="text-amber-300 mx-auto mb-4" />
-                  <h2 className="text-2xl font-bold text-gray-800 mb-2">Loja Fechada no Momento</h2>
-                  <p className="text-gray-600 max-w-md mx-auto">{publicSettings.closedMessage}</p>
+                  <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Loja Fechada no Momento</h2>
+                  <p className="text-gray-600 dark:text-gray-400 max-w-md mx-auto">{publicSettings.closedMessage}</p>
                </div>
             ) : (
                <>
-                 <div className="text-center mb-10">
-                    <h2 className="text-3xl font-black text-amber-900 mb-2">Peça seus Cookies! 🍪</h2>
-                    <p className="text-amber-700 font-medium">Faça a sua reserva abaixo. Entregas na UNESP ou na sua casa.</p>
-                 </div>
+                 {/* CATÁLOGO */}
+                 <section>
+                   <div className="text-center mb-8">
+                      <h2 className="text-3xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies! 🍪</h2>
+                      <p className="text-amber-700 dark:text-amber-400/80 font-medium">Faça a sua reserva abaixo. Entregas exclusivas em Rio Claro/SP.</p>
+                   </div>
 
-                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                    {publicProducts.map(prod => (
-                       <div key={prod.id} className="bg-white rounded-3xl shadow-sm border border-amber-100 overflow-hidden flex flex-col hover:shadow-md transition-shadow">
-                          <div className="h-32 bg-amber-100 flex items-center justify-center">
-                             {prod.type === 'combo' ? <Layers size={48} className="text-amber-300" /> : <Cookie size={48} className="text-amber-300" />}
-                          </div>
-                          <div className="p-5 flex flex-col flex-1">
-                             <h3 className="font-bold text-lg text-gray-800 mb-1">{prod.name}</h3>
-                             {prod.type === 'combo' && <p className="text-xs text-amber-600 font-medium mb-2">{prod.units} unidades</p>}
-                             <p className="text-xl font-black text-green-600 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
-                             
-                             <div className="mt-auto pt-4 border-t border-gray-100 space-y-3">
-                               <input type="text" className="w-full text-xs p-2 bg-gray-50 border border-gray-200 rounded-lg outline-none" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
-                               <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl transition-colors flex justify-center items-center gap-2">
-                                 <Plus size={16}/> Adicionar
-                               </button>
-                             </div>
-                          </div>
-                       </div>
-                    ))}
-                 </div>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                      {publicProducts.map(prod => (
+                         <div key={prod.id} className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-800 overflow-hidden flex flex-col hover:shadow-md transition-all">
+                            <div className="h-32 bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                               {prod.type === 'combo' ? <Layers size={48} className="text-amber-300 dark:text-amber-700/50" /> : <Cookie size={48} className="text-amber-300 dark:text-amber-700/50" />}
+                            </div>
+                            <div className="p-5 flex flex-col flex-1">
+                               <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1">{prod.name}</h3>
+                               {prod.type === 'combo' && <p className="text-xs text-amber-600 dark:text-amber-500 font-medium mb-2">{prod.units} unidades</p>}
+                               <p className="text-xl font-black text-green-600 dark:text-green-500 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
+                               
+                               <div className="mt-auto pt-4 border-t border-gray-100 dark:border-gray-800 space-y-3">
+                                 <input type="text" className="w-full text-xs p-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg outline-none text-gray-800 dark:text-gray-200" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
+                                 <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl transition-colors flex justify-center items-center gap-2">
+                                   <Plus size={16}/> Adicionar
+                                 </button>
+                               </div>
+                            </div>
+                         </div>
+                      ))}
+                   </div>
+                 </section>
+
+                 {/* COMUNIDADE E RANKING */}
+                 <section className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6">
+                    {/* Top Embaixadores */}
+                    <div className="bg-amber-100 dark:bg-amber-900/20 p-6 rounded-3xl border border-amber-200 dark:border-amber-800/50">
+                      <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-4"><Award size={20}/> Top Embaixadores</h3>
+                      <p className="text-xs text-amber-800 dark:text-amber-500/80 mb-4">Quem mais indicou a Abdookies e ganhou cookies grátis!</p>
+                      <div className="space-y-3">
+                        {publicCommunity.topReferrers.length === 0 ? <p className="text-sm text-gray-500">O ranking está vazio.</p> : publicCommunity.topReferrers.map((c, i) => (
+                           <div key={i} className="flex items-center gap-3 bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-amber-200/50 dark:border-gray-800">
+                             <div className="bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-white w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div>
+                             <span className="font-bold text-gray-800 dark:text-gray-200 flex-1">{c.name}</span>
+                             <span className="text-xs font-bold text-amber-700 dark:text-amber-500">{c.count} ind.</span>
+                           </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Quadro de Recompensas */}
+                    <div className="bg-green-50 dark:bg-green-900/10 p-6 rounded-3xl border border-green-200 dark:border-green-900/50">
+                      <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2 mb-4"><Gift size={20}/> Resgates Liberados</h3>
+                      <p className="text-xs text-green-800 dark:text-green-500/80 mb-4">Embaixadores que atingiram a meta e podem pedir o seu mimo hoje!</p>
+                      <div className="space-y-3">
+                        {publicCommunity.pendingRewards.length === 0 ? <p className="text-sm text-gray-500">Nenhum resgate pendente.</p> : publicCommunity.pendingRewards.map((c, i) => (
+                           <div key={i} className="flex flex-col bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-green-200/50 dark:border-gray-800">
+                             <span className="font-bold text-gray-800 dark:text-gray-200">{c.name}</span>
+                             <span className="text-xs font-bold text-green-600 dark:text-green-500">➔ Ganhou: {c.count === 2 ? '1 Mini Cookie' : '1 Cookie Tradicional'}</span>
+                           </div>
+                        ))}
+                      </div>
+                    </div>
+                 </section>
+
+                 {/* CAIXA DE SUGESTÕES PÚBLICA */}
+                 <section className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-gray-800 transition-colors mt-8">
+                   <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-2"><MessageSquarePlus className="text-amber-500"/> Deixe a sua ideia!</h3>
+                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
+                   <form onSubmit={handleSendPublicSuggestion} className="flex flex-col sm:flex-row gap-4 items-end">
+                     <div className="w-full sm:w-48">
+                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seu Nome (Opcional)</label>
+                        <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
+                     </div>
+                     <div className="flex-1 w-full">
+                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
+                        <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache!" />
+                     </div>
+                     <div className="w-full sm:w-40">
+                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Categoria *</label>
+                        <select className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
+                          <option value="flavor">Novo Sabor</option>
+                          <option value="product">Novo Produto</option>
+                          <option value="improvement">Melhoria</option>
+                        </select>
+                     </div>
+                     <button type="submit" className="w-full sm:w-auto bg-amber-600 text-white font-bold py-2.5 px-6 rounded-xl hover:bg-amber-700 transition">Enviar</button>
+                   </form>
+                 </section>
                </>
             )}
          </main>
 
          {/* RODAPÉ E ADMIN LINK */}
          <div className="text-center mt-12 mb-8">
-            <button onClick={() => { if(user && !user.isAnonymous) setAppMode('dashboard'); else setAppMode('admin_login'); }} className="text-xs font-bold text-amber-600 hover:text-amber-800 transition-colors bg-amber-100 px-4 py-2 rounded-full">
-              {user && !user.isAnonymous ? 'Voltar ao Dashboard' : 'Acesso Restrito (Admin)'}
+            <button onClick={() => { if(user && !user.isAnonymous) setAppMode('dashboard'); else setAppMode('admin_login'); }} className="text-xs font-bold text-amber-600 dark:text-gray-500 hover:text-amber-800 transition-colors bg-amber-100 dark:bg-transparent px-4 py-2 rounded-full">
+              {user && !user.isAnonymous ? 'Voltar ao Abdookies Dash' : 'Acesso Restrito (Admin)'}
             </button>
          </div>
 
          {/* MODAL DO CARRINHO */}
          {isCartOpen && (
             <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex justify-end">
-               <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col animate-in slide-in-from-right-8 duration-300">
-                  <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-amber-50">
-                    <h3 className="font-bold text-gray-800 flex items-center gap-2"><ShoppingCart size={20} className="text-amber-600"/> Seu Pedido</h3>
-                    <button onClick={() => setIsCartOpen(false)} className="text-gray-500 hover:text-gray-800 p-2 bg-white rounded-full"><X size={20} /></button>
+               <div className="bg-white dark:bg-gray-950 w-full max-w-md h-full shadow-2xl flex flex-col animate-in slide-in-from-right-8 duration-300">
+                  <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-amber-50 dark:bg-black">
+                    <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><ShoppingCart size={20} className="text-amber-600 dark:text-amber-500"/> Seu Pedido</h3>
+                    <button onClick={() => setIsCartOpen(false)} className="text-gray-500 hover:text-gray-800 dark:hover:text-white p-2 bg-white dark:bg-gray-900 rounded-full"><X size={20} /></button>
                   </div>
                   
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 dark:bg-gray-900">
                      {storeCart.length === 0 ? (
-                        <p className="text-center text-gray-500 mt-10">Seu carrinho está vazio.</p>
+                        <p className="text-center text-gray-500 dark:text-gray-400 mt-10">Seu carrinho está vazio.</p>
                      ) : (
                         storeCart.map((item, i) => (
-                           <div key={i} className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                           <div key={i} className="bg-white dark:bg-gray-800 p-3 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 flex justify-between items-center transition-colors">
                               <div>
-                                 <p className="font-bold text-gray-800 text-sm">{item.name}</p>
-                                 <p className="text-xs text-gray-500">R$ {(item.price * item.qty).toFixed(2)}</p>
-                                 {item.obs && <p className="text-[10px] text-amber-600 italic mt-0.5">Obs: {item.obs}</p>}
+                                 <p className="font-bold text-gray-800 dark:text-gray-200 text-sm">{item.name}</p>
+                                 <p className="text-xs text-gray-500 dark:text-gray-400">R$ {(item.price * item.qty).toFixed(2)}</p>
+                                 {item.obs && <p className="text-[10px] text-amber-600 dark:text-amber-400 italic mt-0.5">Obs: {item.obs}</p>}
                               </div>
                               <div className="flex items-center gap-3">
-                                 <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1 border border-gray-200">
-                                   <button onClick={() => setStoreCart(prev => prev.map((p, idx) => idx === i ? {...p, qty: Math.max(1, p.qty - 1)} : p))} className="w-6 h-6 flex items-center justify-center font-bold text-gray-600">-</button>
-                                   <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
-                                   <button onClick={() => setStoreCart(prev => prev.map((p, idx) => idx === i ? {...p, qty: p.qty + 1} : p))} className="w-6 h-6 flex items-center justify-center font-bold text-gray-600">+</button>
+                                 <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 rounded-lg p-1 border border-gray-200 dark:border-gray-700">
+                                   <button onClick={() => setStoreCart(prev => prev.map((p, idx) => idx === i ? {...p, qty: Math.max(1, p.qty - 1)} : p))} className="w-6 h-6 flex items-center justify-center font-bold text-gray-600 dark:text-gray-300">-</button>
+                                   <span className="text-xs font-bold w-4 text-center dark:text-gray-200">{item.qty}</span>
+                                   <button onClick={() => setStoreCart(prev => prev.map((p, idx) => idx === i ? {...p, qty: p.qty + 1} : p))} className="w-6 h-6 flex items-center justify-center font-bold text-gray-600 dark:text-gray-300">+</button>
                                  </div>
                                  <button onClick={() => setStoreCart(prev => prev.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={16}/></button>
                               </div>
@@ -943,66 +1029,81 @@ export default function CookieDashboard() {
                      )}
 
                      {storeCart.length > 0 && (
-                        <form id="checkout-form" onSubmit={handleCheckoutPublic} className="bg-white p-5 rounded-2xl shadow-sm border border-amber-200 mt-6 space-y-4">
-                           <h4 className="font-bold text-amber-900 border-b border-amber-100 pb-2 mb-4">Dados da Entrega</h4>
+                        <form id="checkout-form" onSubmit={handleCheckoutPublic} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-200 dark:border-amber-900/50 mt-6 space-y-4">
+                           <h4 className="font-bold text-amber-900 dark:text-amber-500 border-b border-amber-100 dark:border-gray-700 pb-2 mb-4">Dados da Entrega</h4>
                            
                            <div>
-                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Seu Nome *</label>
-                             <input required type="text" className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.name} onChange={e => setCheckoutData({...checkoutData, name: e.target.value})} placeholder="Como podemos te chamar?" />
+                             <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase mb-1">Seu Nome *</label>
+                             <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:border-amber-500 text-sm dark:text-gray-200" value={checkoutData.name} onChange={e => setCheckoutData({...checkoutData, name: e.target.value})} placeholder="Como podemos te chamar?" />
                            </div>
 
                            <div>
-                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Quem te indicou? (Opcional)</label>
-                             <input type="text" className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.referredBy} onChange={e => setCheckoutData({...checkoutData, referredBy: e.target.value})} placeholder="Nome de quem te falou de nós" />
-                             <p className="text-[10px] text-gray-400 mt-1">Sua indicação pode gerar cookies grátis para o seu amigo!</p>
+                             <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase mb-1">Quem te indicou? (Opcional)</label>
+                             <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:border-amber-500 text-sm dark:text-gray-200" value={checkoutData.referredBy} onChange={e => setCheckoutData({...checkoutData, referredBy: e.target.value})} placeholder="Nome de quem te falou de nós" />
+                             <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">Sua indicação pode gerar cookies grátis para o seu amigo!</p>
                            </div>
 
                            <div className="flex gap-3">
                              <div className="w-1/2">
-                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Tipo de Entrega *</label>
-                               <select required className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.deliveryType} onChange={e => setCheckoutData({...checkoutData, deliveryType: e.target.value})}>
+                               <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase mb-1">Tipo de Entrega *</label>
+                               <select required className="w-full p-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:border-amber-500 text-sm dark:text-gray-200" value={checkoutData.deliveryType} onChange={e => setCheckoutData({...checkoutData, deliveryType: e.target.value})}>
                                  <option value="unesp">Na UNESP</option>
                                  <option value="home">Em Casa</option>
                                </select>
                              </div>
                              <div className="w-1/2">
-                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Data *</label>
-                               <input required type="date" min={getTodayYMD()} max={getMaxDateYMD(publicSettings.maxAdvanceDays)} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.date} onChange={e => setCheckoutData({...checkoutData, date: e.target.value})} />
+                               <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase mb-1">Data *</label>
+                               <input required type="date" min={getTodayYMD()} max={getMaxDateYMD(publicSettings.maxAdvanceDays)} className="w-full p-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:border-amber-500 text-sm dark:text-gray-200 [&::-webkit-calendar-picker-indicator]:dark:invert" value={checkoutData.date} onChange={e => setCheckoutData({...checkoutData, date: e.target.value})} />
                              </div>
                            </div>
 
                            {checkoutData.deliveryType === 'unesp' && (
                              <div>
-                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Período (UNESP) *</label>
-                               <select required className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.period} onChange={e => setCheckoutData({...checkoutData, period: e.target.value})}>
-                                 <option value="Manhã">Manhã</option>
-                                 <option value="Tarde">Tarde</option>
-                                 <option value="Noite">Noite</option>
+                               <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase mb-1">Período/Local (UNESP) *</label>
+                               <select required className="w-full p-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:border-amber-500 text-sm dark:text-gray-200" value={checkoutData.period} onChange={e => setCheckoutData({...checkoutData, period: e.target.value})}>
+                                 <option value="Manhã (Departamentos/Prédios)">Manhã</option>
+                                 <option value="Tarde (Departamentos/Prédios)">Tarde</option>
+                                 <option value="Noite (Departamentos/Prédios)">Noite</option>
                                </select>
                              </div>
                            )}
 
                            {checkoutData.deliveryType === 'home' && (
                              <div>
-                               <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Endereço Completo *</label>
-                               <input required type="text" className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-amber-500 text-sm" value={checkoutData.address} onChange={e => setCheckoutData({...checkoutData, address: e.target.value})} placeholder="Rua, Número, Bairro" />
+                               <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase mb-1">Endereço Completo *</label>
+                               <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:border-amber-500 text-sm dark:text-gray-200" value={checkoutData.address} onChange={e => setCheckoutData({...checkoutData, address: e.target.value})} placeholder="Rua, Número, Bairro" />
                              </div>
                            )}
 
-                           <div className="bg-amber-50 p-3 rounded-xl border border-amber-200 text-xs text-amber-800 text-center font-medium mt-4">
-                             Atenção: Os pedidos são feitos sob demanda e estão sujeitos à disponibilidade do nosso estoque no dia!
+                           {/* POLÍTICAS DE ENTREGA OBRIGATÓRIAS */}
+                           <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-xl border border-red-200 dark:border-red-800/50 flex flex-col gap-3 mt-4">
+                             <div className="flex gap-2">
+                               <ShieldAlert size={18} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                               <div>
+                                 <p className="text-xs font-bold text-red-900 dark:text-red-400">Políticas e Avisos Importantes</p>
+                                 <ul className="text-[10px] text-red-800 dark:text-red-300 list-disc pl-4 mt-1 space-y-0.5">
+                                   <li>Entregas <b>apenas</b> na UNESP, Bela Vista e Vila Alemã.</li>
+                                   <li>Os pedidos são feitos <b>sob demanda</b> e sujeitos à disponibilidade do nosso stock diário.</li>
+                                   <li>A confirmação final será feita sempre pelo nosso WhatsApp.</li>
+                                 </ul>
+                               </div>
+                             </div>
+                             <label className="flex items-center gap-2 cursor-pointer pt-2 border-t border-red-200/50 dark:border-red-800/50">
+                               <input type="checkbox" required className="w-4 h-4 rounded border-gray-300 accent-amber-600 cursor-pointer" checked={checkoutData.acceptedPolicies} onChange={e => setCheckoutData({...checkoutData, acceptedPolicies: e.target.checked})} />
+                               <span className="text-xs font-bold text-gray-700 dark:text-gray-300">Li e concordo com os avisos acima.</span>
+                             </label>
                            </div>
                         </form>
                      )}
                   </div>
                   
                   {storeCart.length > 0 && (
-                     <div className="p-4 border-t border-gray-200 bg-white">
+                     <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
                         <div className="flex justify-between items-center mb-4">
-                           <span className="font-bold text-gray-600">Total do Pedido:</span>
-                           <span className="font-black text-2xl text-green-600">R$ {storeCart.reduce((a,b)=>a+b.price*b.qty, 0).toFixed(2)}</span>
+                           <span className="font-bold text-gray-600 dark:text-gray-400">Total do Pedido:</span>
+                           <span className="font-black text-2xl text-green-600 dark:text-green-500">R$ {storeCart.reduce((a,b)=>a+b.price*b.qty, 0).toFixed(2)}</span>
                         </div>
-                        <button form="checkout-form" type="submit" className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3.5 rounded-xl transition-colors shadow-lg flex items-center justify-center gap-2 text-lg">
+                        <button form="checkout-form" disabled={!checkoutData.acceptedPolicies} type="submit" className="w-full bg-green-500 hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl transition-colors shadow-lg flex items-center justify-center gap-2 text-lg">
                            <Send size={20} /> Fechar Pedido via WhatsApp
                         </button>
                      </div>
@@ -1026,7 +1127,7 @@ export default function CookieDashboard() {
             <div className="bg-amber-100 dark:bg-amber-900/50 p-4 rounded-full text-amber-600 dark:text-amber-400"><Lock size={40} /></div>
           </div>
           <h1 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100 mb-2">Acesso Restrito</h1>
-          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">Gestão interna do CookieDash.</p>
+          <p className="text-center text-gray-500 dark:text-gray-400 text-sm mb-8">Gestão interna Abdookies Dash.</p>
           
           {authError && (<div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm font-medium text-center">{authError}</div>)}
           {resetMessage && (<div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl text-green-600 dark:text-green-400 text-sm font-medium text-center">{resetMessage}</div>)}
@@ -1080,7 +1181,7 @@ export default function CookieDashboard() {
         
         {/* Sidebar */}
         <aside className="w-64 bg-amber-900 dark:bg-gray-950 text-amber-50 flex flex-col shadow-xl z-20 transition-colors duration-300 hidden md:flex">
-          <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">CookieDash</h1></div>
+          <div className="p-6 flex items-center gap-3"><Cookie size={32} className="text-amber-300" /><h1 className="text-2xl font-bold tracking-tight">Abdookies Dash</h1></div>
           <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
             <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><BarChart3 size={20} /> Visão Geral</button>
             <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'products' ? 'bg-amber-800 dark:bg-amber-700 text-white' : 'hover:bg-amber-800/50 dark:hover:bg-gray-800'}`}><ShoppingBag size={20} /> Catálogo</button>
@@ -1110,7 +1211,7 @@ export default function CookieDashboard() {
            <button onClick={() => setActiveTab('dashboard')} className={`p-2 rounded-lg ${activeTab === 'dashboard' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><BarChart3 size={24}/></button>
            <button onClick={() => setActiveTab('inventory')} className={`p-2 rounded-lg ${activeTab === 'inventory' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ClipboardList size={24}/></button>
            <button onClick={() => setActiveTab('reservations')} className={`p-2 rounded-lg ${activeTab === 'reservations' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><CalendarCheck size={24}/></button>
-           <button onClick={() => setActiveTab('costs')} className={`p-2 rounded-lg ${activeTab === 'costs' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Calculator size={24}/></button>
+           <button onClick={() => setActiveTab('store_settings')} className={`p-2 rounded-lg ${activeTab === 'store_settings' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Store size={24}/></button>
            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
         </div>
 
@@ -1516,7 +1617,6 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
-                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1746,7 +1846,7 @@ export default function CookieDashboard() {
                       {products.filter(p => p.type === 'single' || !p.type).length === 0 ? (
                         <p className="col-span-2 text-sm text-gray-400 dark:text-gray-500 p-4 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl text-center">Nenhum produto individual.</p>
                       ) : products.filter(p => p.type === 'single' || !p.type).map(product => (
-                        <div key={product.id} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex justify-between items-center group transition-colors">
+                        <div key={product.id} className={`bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border ${product.isVisible === false ? 'border-gray-200 dark:border-gray-700 opacity-60' : 'border-amber-100 dark:border-amber-900/50'} flex justify-between items-center group transition-colors`}>
                           <div className="flex items-center gap-3">
                             <div className="bg-orange-100 dark:bg-orange-900/30 p-3 rounded-full text-orange-600 dark:text-orange-400"><Tag size={20} /></div>
                             <div>
@@ -1754,7 +1854,12 @@ export default function CookieDashboard() {
                               <p className="text-sm font-medium text-green-600 dark:text-green-400">R$ {(Number(product.price)||0).toFixed(2)}</p>
                             </div>
                           </div>
-                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover"><Trash2 size={18} /></button>
+                          <div className="flex gap-1">
+                            <button onClick={() => handleToggleProductVisibility(product.id, product.isVisible)} className={`p-2 rounded-lg transition-colors ${product.isVisible === false ? 'text-gray-400 bg-gray-100 dark:bg-gray-700 hover:text-amber-500' : 'text-amber-600 bg-amber-50 dark:bg-amber-900/30 hover:text-amber-800'}`} title={product.isVisible === false ? "Mostrar na Loja" : "Ocultar da Loja"}>
+                              {product.isVisible === false ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                            <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Remover Definitivamente"><Trash2 size={18} /></button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1765,7 +1870,7 @@ export default function CookieDashboard() {
                       {products.filter(p => p.type === 'combo').length === 0 ? (
                         <p className="col-span-2 text-sm text-gray-400 dark:text-gray-500 p-4 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl text-center">Nenhum combo cadastrado.</p>
                       ) : products.filter(p => p.type === 'combo').map(product => (
-                        <div key={product.id} className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-200 dark:border-amber-700/50 flex justify-between items-center group transition-colors">
+                        <div key={product.id} className={`bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border ${product.isVisible === false ? 'border-gray-200 dark:border-gray-700 opacity-60' : 'border-amber-100 dark:border-amber-900/50'} flex justify-between items-center group transition-colors`}>
                           <div className="flex items-center gap-3">
                             <div className="bg-amber-200 dark:bg-amber-900/50 p-3 rounded-full text-amber-700 dark:text-amber-400"><Layers size={20} /></div>
                             <div>
@@ -1776,7 +1881,12 @@ export default function CookieDashboard() {
                               </div>
                             </div>
                           </div>
-                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-amber-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover"><Trash2 size={18} /></button>
+                          <div className="flex gap-1">
+                            <button onClick={() => handleToggleProductVisibility(product.id, product.isVisible)} className={`p-2 rounded-lg transition-colors ${product.isVisible === false ? 'text-gray-400 bg-gray-100 dark:bg-gray-700 hover:text-amber-500' : 'text-amber-600 bg-amber-50 dark:bg-amber-900/30 hover:text-amber-800'}`} title={product.isVisible === false ? "Mostrar na Loja" : "Ocultar da Loja"}>
+                              {product.isVisible === false ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                            <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Remover"><Trash2 size={18} /></button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2010,6 +2120,221 @@ export default function CookieDashboard() {
             </div>
           )}
 
+          {/* TAB: RESERVAS E ENTREGAS */}
+          {activeTab === 'reservations' && (
+            <div className="max-w-6xl mx-auto animate-in fade-in duration-300">
+              <div className="mb-8">
+                <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Reservas e Encomendas</h2>
+                <p className="text-gray-600 dark:text-gray-400 mt-2">Crie encomendas manualmente ou aprove pedidos da Loja Online. Ao marcá-las como "Concluídas", entram automaticamente nas Vendas!</p>
+              </div>
+              
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Carrinho de Reservas */}
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 h-fit transition-colors flex flex-col">
+                  <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2"><Plus size={20} className="text-amber-600 dark:text-amber-500" /> Nova Encomenda</h3>
+                  <form onSubmit={handleFinalizeReservation} className="space-y-4 flex flex-col flex-1">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nome do Cliente</label>
+                      <input list="customers-list" required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.name} onChange={e => setNewReservation({...newReservation, name: e.target.value})} placeholder="Escreva ou escolha..." />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quem indicou? (Opcional)</label>
+                      <input list="customers-list" type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.referredByInput} onChange={e => setNewReservation({...newReservation, referredByInput: e.target.value})} placeholder="Busque..." />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data de Entrega (Opcional)</label>
+                      <input type="date" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.date} onChange={e => setNewReservation({...newReservation, date: e.target.value})} />
+                    </div>
+
+                    <div className="bg-amber-50 dark:bg-gray-900 p-4 rounded-xl border border-amber-200 dark:border-gray-700 mt-2">
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Adicionar Item</label>
+                      <select className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 text-gray-800 dark:text-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-amber-500 transition-colors mb-2 text-sm" value={newReservation.productId} onChange={e => setNewReservation({...newReservation, productId: e.target.value})}>
+                        {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
+                          <>
+                            <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {(Number(p.price)||0).toFixed(2)}</option>)}</optgroup>
+                            {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un)</option>)}</optgroup>}
+                          </>
+                        )}
+                      </select>
+                      <div className="flex items-end gap-2 mb-2">
+                         <div className="flex-1">
+                           <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Quantidade</label>
+                           <input type="number" min="1" className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded-lg outline-none text-center text-gray-800 dark:text-gray-200" value={newReservation.quantity} onChange={e => setNewReservation({...newReservation, quantity: e.target.value})} />
+                         </div>
+                         <button type="button" onClick={handleAddToCartReservation} className="bg-amber-500 text-amber-950 px-4 py-2 rounded-lg font-bold text-sm hover:bg-amber-400 transition-colors">+ Adicionar</button>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 mt-2">Observações</label>
+                        <input type="text" className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded-lg outline-none text-sm text-gray-800 dark:text-gray-200" value={newReservation.observation} onChange={e => setNewReservation({...newReservation, observation: e.target.value})} placeholder="Opcional..." />
+                      </div>
+                    </div>
+
+                    {reservationCart.length > 0 && (
+                      <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-xl text-sm border border-gray-200 dark:border-gray-700">
+                        <p className="font-bold text-gray-700 dark:text-gray-300 mb-2">Itens na Encomenda:</p>
+                        {reservationCart.map((item, i) => (
+                          <div key={i} className="flex justify-between items-center text-gray-600 dark:text-gray-400 mb-1 pb-1 border-b border-gray-200 dark:border-gray-700 last:border-0">
+                            <div className="flex flex-col">
+                               <span>{item.quantity}x {item.productName}</span>
+                               {item.observation && <span className="text-[10px] italic">Obs: {item.observation}</span>}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">R$ {(Number(item.expectedRevenue)||0).toFixed(2)}</span>
+                              <button type="button" onClick={() => setReservationCart(reservationCart.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500"><Trash2 size={14}/></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button type="submit" className="w-full bg-amber-600 dark:bg-amber-700 text-white py-3 rounded-xl hover:bg-amber-700 dark:hover:bg-amber-600 transition font-bold mt-auto shadow-sm">Guardar Encomenda Completa</button>
+                  </form>
+                </div>
+
+                <div className="lg:col-span-2 space-y-6">
+                  {/* PEDIDOS DO WHATSAPP (LOJA ONLINE) */}
+                  <div className="bg-green-50/50 dark:bg-gray-800 rounded-2xl shadow-sm border-2 border-green-200 dark:border-green-700/50 overflow-hidden transition-colors">
+                    <div className="p-4 border-b border-green-200 dark:border-green-700/50 bg-green-100/50 dark:bg-green-900/30 flex justify-between items-center">
+                       <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2"><ShoppingCart size={18}/> 🛒 Pedidos da Loja Online</h3>
+                       <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-green-700 dark:text-green-500">{onlineOrders.length} aguardando aprovação</span>
+                    </div>
+                    <div className="overflow-x-auto max-h-[300px]">
+                      <table className="w-full text-left border-collapse">
+                        <tbody>
+                          {onlineOrders.length === 0 ? (
+                            <tr><td colSpan="4" className="p-6 text-center text-sm text-gray-500">Nenhum pedido novo do site.</td></tr>
+                          ) : onlineOrders.map((order) => (
+                            <tr key={order.id} className="border-b border-green-100 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-750 transition-colors">
+                              <td className="p-3">
+                                <div className="flex flex-col gap-0.5">
+                                  <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{order.customerName}</p>
+                                  <p className="text-[10px] text-gray-500 font-medium">Data Pedido: {new Date(order.createdAt).toLocaleDateString('pt-BR')}</p>
+                                  {order.referredByInput && <p className="text-[10px] text-amber-600 font-bold">🌟 Indicação: {order.referredByInput}</p>}
+                                </div>
+                              </td>
+                              <td className="p-3">
+                                <div className="flex flex-col gap-1">
+                                  {order.cart.map((item, idx) => (
+                                    <p key={idx} className="text-xs text-gray-600 dark:text-gray-300 font-medium">
+                                      {item.qty}x {item.name}
+                                      {item.obs && <span className="text-amber-500 italic block"> - Obs: {item.obs}</span>}
+                                    </p>
+                                  ))}
+                                  <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-1 bg-blue-50 dark:bg-blue-900/30 w-fit px-1 rounded">
+                                    Entrega: {order.deliveryType === 'unesp' ? `UNESP (${order.period})` : `Casa (${order.address})`} - {new Date(order.deliveryDate).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}
+                                  </p>
+                                </div>
+                              </td>
+                              <td className="p-3 text-right text-sm font-bold text-green-700 dark:text-green-500">R$ {(Number(order.total)||0).toFixed(2)}</td>
+                              <td className="p-3 text-center flex flex-col sm:flex-row items-center justify-center gap-1 mt-2">
+                                <button onClick={() => handleApproveOnlineOrder(order)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1.5 text-xs font-bold rounded shadow-sm transition-colors w-full sm:w-auto">Aprovar</button>
+                                <button onClick={() => handleRejectOnlineOrder(order.id)} className="text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 p-1.5 rounded transition-colors w-full sm:w-auto" title="Descartar"><Trash2 size={16} className="mx-auto"/></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO 1: PENDENTES (Aprovadas ou Manuais) */}
+                  <div className="bg-amber-50/50 dark:bg-gray-800 rounded-2xl shadow-sm border-2 border-amber-200 dark:border-amber-700/50 overflow-hidden transition-colors">
+                    <div className="p-4 border-b border-amber-200 dark:border-amber-700/50 bg-amber-100/50 dark:bg-amber-900/30 flex justify-between items-center">
+                       <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2"><Clock size={18}/> Encomendas Pendentes</h3>
+                       <div className="flex items-center gap-2">
+                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-amber-700 dark:text-amber-500 hidden sm:block">Filtrar por:</span>
+                         <select className="text-xs bg-transparent outline-none font-bold text-amber-900 dark:text-amber-200 cursor-pointer" value={reservationSortBy} onChange={e => setReservationSortBy(e.target.value)}>
+                           <option value="date-asc">Data ⬆</option>
+                           <option value="date-desc">Data ⬇</option>
+                           <option value="name-asc">Nome Cliente (A-Z)</option>
+                           <option value="product-asc">Produto (A-Z)</option>
+                         </select>
+                       </div>
+                    </div>
+                    <div className="overflow-x-auto max-h-[400px]">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-white/50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs border-b border-amber-100 dark:border-gray-700">
+                            <th className="p-3 font-semibold">Cliente & Pedido</th>
+                            <th className="p-3 font-semibold text-center">Data</th>
+                            <th className="p-3 font-semibold text-right">Valor</th>
+                            <th className="p-3 font-semibold text-center">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedReservations.pending.length === 0 ? (
+                            <tr><td colSpan="4" className="p-6 text-center text-sm text-gray-500">Tudo limpo por aqui! Nenhuma encomenda na fila.</td></tr>
+                          ) : sortedReservations.pending.map((res) => (
+                            <tr key={res.id} className="border-b border-amber-50 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-750 transition-colors">
+                              <td className="p-3">
+                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{res.name}</p>
+                                
+                                {/* A NOVA FORMA ELEGANTE DE MOSTRAR AS OBSERVAÇÕES */}
+                                <div className="flex flex-col gap-1 mt-0.5">
+                                  <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{res.quantity}x {res.productName}</p>
+                                  {res.observation && (
+                                    <span 
+                                      className="inline-flex items-center gap-1 w-fit bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-2 py-1 rounded-md text-[10px] cursor-help font-bold border border-amber-200 dark:border-amber-700/50"
+                                      title={res.observation}
+                                    >
+                                      <Info size={12} /> Obs. do Pedido
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="p-3 text-center text-xs font-bold text-amber-700 dark:text-amber-500">{res.date ? new Date(res.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}</td>
+                              <td className="p-3 text-right text-sm font-bold text-gray-700 dark:text-gray-300">R$ {(Number(res.expectedRevenue)||0).toFixed(2)}</td>
+                              <td className="p-3 text-center flex items-center justify-center gap-1 mt-2">
+                                <button onClick={() => handleUpdateReservationStatus(res.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Concluir (Envia Venda)"><CheckCircle size={18}/></button>
+                                <button onClick={() => {
+                                  const referrer = customers.find(c => c.id === res.referredBy);
+                                  setEditingReservation({...res, referredByInput: referrer ? referrer.name : ''});
+                                }} className="text-amber-600 hover:bg-amber-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Editar"><Edit size={16}/></button>
+                                <button onClick={() => handleUpdateReservationStatus(res.id, 'cancelled')} className="text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Cancelar"><XCircle size={18}/></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO 2: HISTÓRICO (Efetivadas/Canceladas) */}
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors opacity-80 hover:opacity-100">
+                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                       <h3 className="font-bold text-gray-600 dark:text-gray-400 flex items-center gap-2 text-sm"><History size={16}/> Histórico de Encomendas</h3>
+                    </div>
+                    <div className="overflow-x-auto max-h-[250px]">
+                      <table className="w-full text-left border-collapse">
+                        <tbody>
+                          {sortedReservations.past.length === 0 ? (
+                            <tr><td className="p-4 text-center text-xs text-gray-400">Nenhum histórico.</td></tr>
+                          ) : sortedReservations.past.map((res) => (
+                            <tr key={res.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                              <td className="p-3">
+                                <p className="font-medium text-xs text-gray-700 dark:text-gray-300">{res.name} <span className="text-gray-400">({res.quantity}x {res.productName})</span></p>
+                              </td>
+                              <td className="p-3 text-center">
+                                {res.status === 'completed' ? <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">Concluída</span> : <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Cancelada</span>}
+                              </td>
+                              <td className="p-3 text-right">
+                                <button onClick={() => {
+                                  const referrer = customers.find(c => c.id === res.referredBy);
+                                  setEditingReservation({...res, referredByInput: referrer ? referrer.name : ''});
+                                }} className="text-gray-400 hover:text-amber-500 p-1 rounded" title="Editar Histórico"><Edit size={14}/></button>
+                                <button onClick={() => handleDeleteReservation(res.id)} className="text-gray-400 hover:text-red-500 p-1 rounded" title="Excluir Definitivamente"><Trash2 size={14}/></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB: REDE */}
           {activeTab === 'network' && (
             <div className="max-w-5xl mx-auto h-full flex flex-col animate-in fade-in duration-300">
@@ -2037,13 +2362,53 @@ export default function CookieDashboard() {
               <div className="flex justify-between items-end mb-8">
                 <div>
                   <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Ideias & Sugestões</h2>
-                  <p className="text-gray-600 dark:text-gray-400 mt-2">Anote feedbacks, novos sabores e produtos para o futuro.</p>
+                  <p className="text-gray-600 dark:text-gray-400 mt-2">Anote feedbacks e processe sugestões enviadas pelos seus clientes no site.</p>
                 </div>
               </div>
+
+              {/* IDEIAS PENDENTES DA LOJA ONLINE */}
+              {onlineSuggestions.length > 0 && (
+                 <div className="bg-blue-50 dark:bg-gray-800 rounded-3xl shadow-sm border-2 border-blue-200 dark:border-blue-800/50 p-6 mb-8 transition-colors">
+                    <h3 className="text-xl font-bold text-blue-900 dark:text-blue-400 flex items-center gap-2 mb-4">
+                      <MessageSquarePlus size={22}/> Sugestões do Público ({onlineSuggestions.length})
+                    </h3>
+                    <div className="space-y-4">
+                       {onlineSuggestions.map(pubSug => {
+                          const match = suggestions.find(s => s.type === pubSug.type && ( (s.text||'').toLowerCase().includes((pubSug.text||'').toLowerCase()) || (pubSug.text||'').toLowerCase().includes((s.text||'').toLowerCase()) ));
+                          return (
+                             <div key={pubSug.id} className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-blue-100 dark:border-gray-700 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
+                                <div>
+                                   <span className="text-[10px] font-bold uppercase tracking-wider text-blue-500 mb-1 block">{(pubSug.name || 'Anónimo').trim()} enviou:</span>
+                                   <p className="text-gray-800 dark:text-gray-200 font-medium">"{pubSug.text}"</p>
+                                </div>
+                                <div className="flex flex-col items-end gap-2 w-full md:w-auto">
+                                   {match ? (
+                                      <div className="flex flex-col items-end w-full">
+                                         <p className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mb-1">⚠️ Parecido com: "{match.text}"</p>
+                                         <div className="flex gap-2 w-full md:w-auto">
+                                            <button onClick={() => handleApprovePublicSuggestion(pubSug, false)} className="flex-1 text-xs bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 font-bold py-2 px-3 rounded-lg transition-colors">Criar Nova Separada</button>
+                                            <button onClick={() => handleApprovePublicSuggestion(pubSug, true, match.id)} className="flex-1 text-xs bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded-lg transition-colors flex items-center gap-1 justify-center"><ThumbsUp size={14}/> Votar na Existente (+1)</button>
+                                            <button onClick={() => handleRejectPublicSuggestion(pubSug.id)} className="text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 text-red-500 py-2 px-3 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                                         </div>
+                                      </div>
+                                   ) : (
+                                      <div className="flex gap-2 w-full md:w-auto">
+                                         <button onClick={() => handleApprovePublicSuggestion(pubSug, false)} className="flex-1 text-xs bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Aprovar como Nova</button>
+                                         <button onClick={() => handleRejectPublicSuggestion(pubSug.id)} className="text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 text-red-500 py-2 px-3 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                                      </div>
+                                   )}
+                                </div>
+                             </div>
+                          );
+                       })}
+                    </div>
+                 </div>
+              )}
+
               <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-amber-100 dark:border-gray-700 mb-8 flex flex-col gap-4 transition-colors">
                 <form onSubmit={handleAddSuggestion} className="flex flex-col md:flex-row gap-4 items-end">
                   <div className="flex-1 w-full">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Descreva a ideia...</label>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Descreva a ideia (Admin)...</label>
                     <input required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newSuggestion.text} onChange={e => setNewSuggestion({...newSuggestion, text: e.target.value})} placeholder="Ex: Cookie sabor Limão Siciliano" />
                   </div>
                   <div className="w-full md:w-48">
@@ -2102,15 +2467,15 @@ export default function CookieDashboard() {
                  </div>
                  <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-400">Receita Total <span className="text-[10px] block">Todas as Vendas</span></span>
-                    <span className="text-green-400 font-bold">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
+                    <span className="text-green-400 font-bold">R$ {(Number(globalMetrics.totalRevenue)||0).toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-400">Custo Histórico <span className="text-[10px] block">Ficha Técnica ({(Number(globalMetrics.totalCookiesSold)||0)} un.)</span></span>
-                    <span className="text-red-400 font-bold">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
+                    <span className="text-red-400 font-bold">-R$ {(Number(globalMetrics.totalEstimatedCost)||0).toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between mt-2 pt-2 border-t border-gray-700 mb-3">
                     <span className="font-bold text-white">Lucro Real (Histórico)</span>
-                    <span className="text-amber-400 font-black text-lg">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</span>
+                    <span className="text-amber-400 font-black text-lg">R$ {(Number(globalMetrics.totalEstimatedProfit)||0).toFixed(2)}</span>
                  </div>
                  <div className="bg-gray-900 rounded-xl p-3 border border-gray-700">
                     <span className="text-gray-400 text-xs block mb-1">Custo para bater +1 receita hoje (Mercado):</span>
@@ -2127,7 +2492,7 @@ export default function CookieDashboard() {
              >
                <div className="flex flex-col items-center">
                  <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Faturamento</span>
-                 <span className="font-black text-green-400">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
+                 <span className="font-black text-green-400">R$ {(Number(globalMetrics.totalRevenue)||0).toFixed(2)}</span>
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
@@ -2137,7 +2502,7 @@ export default function CookieDashboard() {
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
                  <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lucro Líquido</span>
-                 <span className="font-black text-amber-400 flex items-center gap-1">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)} <Info size={12} className="text-gray-500 hidden md:block" /></span>
+                 <span className="font-black text-amber-400 flex items-center gap-1">R$ {(Number(globalMetrics.totalEstimatedProfit)||0).toFixed(2)} <Info size={12} className="text-gray-500 hidden md:block" /></span>
                </div>
              </button>
           </div>
@@ -2153,15 +2518,15 @@ export default function CookieDashboard() {
                 <form onSubmit={handleSaveEditCustomer} className="p-6 space-y-4">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nome</label>
-                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.name} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
+                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.name} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Qtd. Compras</label>
-                    <input type="number" min="0" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.purchases} onChange={e => setEditingCustomer({...editingCustomer, purchases: e.target.value})} />
+                    <input type="number" min="0" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.purchases} onChange={e => setEditingCustomer({...editingCustomer, purchases: e.target.value})} />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Quem indicou? (Opcional)</label>
-                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.referredByInput !== undefined ? editingCustomer.referredByInput : ''} onChange={e => setEditingCustomer({...editingCustomer, referredByInput: e.target.value})} placeholder="Busque ou apague para remover..." />
+                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.referredByInput !== undefined ? editingCustomer.referredByInput : ''} onChange={e => setEditingCustomer({...editingCustomer, referredByInput: e.target.value})} placeholder="Busque ou apague para remover..." />
                   </div>
                   <button type="submit" className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl mt-2 hover:bg-amber-700">Salvar Alterações</button>
                 </form>
@@ -2180,33 +2545,33 @@ export default function CookieDashboard() {
                 <form onSubmit={handleSaveEditReservation} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Cliente</label>
-                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.name} onChange={e => handleEditReservationChange('name', e.target.value)} />
+                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingReservation.name} onChange={e => handleEditReservationChange('name', e.target.value)} />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Quem indicou? (Opcional)</label>
-                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.referredByInput !== undefined ? editingReservation.referredByInput : ''} onChange={e => handleEditReservationChange('referredByInput', e.target.value)} placeholder="Busque ou apague para remover..." />
+                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingReservation.referredByInput !== undefined ? editingReservation.referredByInput : ''} onChange={e => handleEditReservationChange('referredByInput', e.target.value)} placeholder="Busque ou apague para remover..." />
                   </div>
                   <div className="flex gap-3">
                     <div className="w-2/3">
                       <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Produto</label>
-                      <select className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-sm" value={editingReservation.productId} onChange={e => handleEditReservationChange('productId', e.target.value)}>
+                      <select className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-sm text-gray-800 dark:text-gray-200" value={editingReservation.productId} onChange={e => handleEditReservationChange('productId', e.target.value)}>
                         <option value="avulso">Produto Avulso</option>
                         {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                     </div>
                     <div className="w-1/3">
                       <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Qtd</label>
-                      <input type="number" min="1" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-center" value={editingReservation.quantity} onChange={e => handleEditReservationChange('quantity', e.target.value)} />
+                      <input type="number" min="1" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-center text-gray-800 dark:text-gray-200" value={editingReservation.quantity} onChange={e => handleEditReservationChange('quantity', e.target.value)} />
                     </div>
                   </div>
                   <div className="flex gap-3">
                     <div className="w-1/2">
                       <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Data Entrega</label>
-                      <input type="date" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.date} onChange={e => handleEditReservationChange('date', e.target.value)} />
+                      <input type="date" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200 [&::-webkit-calendar-picker-indicator]:dark:invert" value={editingReservation.date} onChange={e => handleEditReservationChange('date', e.target.value)} />
                     </div>
                     <div className="w-1/2">
                       <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Status</label>
-                      <select className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-sm" value={editingReservation.status} onChange={e => handleEditReservationChange('status', e.target.value)}>
+                      <select className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-sm text-gray-800 dark:text-gray-200" value={editingReservation.status} onChange={e => handleEditReservationChange('status', e.target.value)}>
                         <option value="pending">⏳ Pendente</option>
                         <option value="completed">✅ Concluída</option>
                         <option value="cancelled">❌ Cancelada</option>
@@ -2215,7 +2580,7 @@ export default function CookieDashboard() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Observações</label>
-                    <input type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.observation || ''} onChange={e => handleEditReservationChange('observation', e.target.value)} />
+                    <input type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingReservation.observation || ''} onChange={e => handleEditReservationChange('observation', e.target.value)} />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Valor Cobrado (R$)</label>
