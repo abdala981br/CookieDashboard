@@ -46,7 +46,6 @@ const getTodayYMD = () => {
 };
 
 // --- COMPONENTE EXTRA: NODE DA REDE DE INDICAÇÕES ---
-// Movido para fora para evitar re-renderizações e erros de estado
 const NetworkNode = ({ customer, customers, isRoot = false }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const children = customers.filter(c => c.referredBy === customer.id);
@@ -109,7 +108,7 @@ export default function CookieDashboard() {
   const [newSuggestion, setNewSuggestion] = useState({ type: 'flavor', text: '' });
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
   
-  // Carrinhos de Múltiplos Itens (Vendas e Reservas)
+  // Carrinhos
   const [quickSale, setQuickSale] = useState({ customerName: '', referredByInput: '', productId: '', quantity: 1, revenue: 0, date: getTodayYMD(), observation: '' });
   const [quickSaleCart, setQuickSaleCart] = useState([]);
   
@@ -220,10 +219,11 @@ export default function CookieDashboard() {
   }, [customers]);
 
   // --- CÁLCULOS DA FICHA TÉCNICA E CUSTOS ---
+  // Blindagem com Number() em todo o lado para evitar ecrãs brancos
   const costMetrics = useMemo(() => {
     const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((Number(ing.bulkPrice) || 0) / (Number(ing.bulkQty) || 1)) * (Number(ing.recipeQty) || 0), 0);
-    const costPerCookie = totalRecipeCost / (recipeConfig.yield || 1);
-    const profit = (recipeConfig.salePrice || 0) - costPerCookie;
+    const costPerCookie = totalRecipeCost / (Number(recipeConfig.yield) || 1);
+    const profit = (Number(recipeConfig.salePrice) || 0) - costPerCookie;
     const profitMargin = recipeConfig.salePrice > 0 ? (profit / recipeConfig.salePrice) * 100 : 0;
     return { totalRecipeCost, costPerCookie, profit, profitMargin };
   }, [ingredients, recipeConfig]);
@@ -232,7 +232,7 @@ export default function CookieDashboard() {
   const inventoryCheck = useMemo(() => {
     const list = ingredients.map(ing => {
       const wasteFactor = ing.applyWaste ? 1.02 : 1; 
-      const totalNeeded = ((Number(ing.recipeQty) || 0) * wasteFactor) * productionBatches;
+      const totalNeeded = ((Number(ing.recipeQty) || 0) * wasteFactor) * (Number(productionBatches) || 1);
       const currentStock = parseFloat(ing.currentStock) || 0;
       const missingAmount = Math.max(0, totalNeeded - currentStock);
       
@@ -250,7 +250,7 @@ export default function CookieDashboard() {
 
       return { ...ing, totalNeeded, missingAmount, packagesToBuy, exactMissingToBuy, costToBuy, wasteFactor };
     });
-    const totalMissingCost = list.reduce((sum, item) => sum + item.costToBuy, 0);
+    const totalMissingCost = list.reduce((sum, item) => sum + (Number(item.costToBuy) || 0), 0);
     const canProduce = list.every(item => item.missingAmount === 0);
     return { list, totalMissingCost, canProduce };
   }, [ingredients, productionBatches]);
@@ -273,13 +273,14 @@ export default function CookieDashboard() {
   }, [ingredients]);
 
   // --- 🧠 MÓDULO INTELIGÊNCIA DE NEGÓCIO (BI) ---
-  
   const globalMetrics = useMemo(() => {
     const totalRevenue = sales.reduce((acc, curr) => acc + (Number(curr.revenue) || 0), 0);
     const totalCookiesSold = sales.reduce((acc, curr) => acc + (Number(curr.cookieUnits) || Number(curr.quantity) || 0), 0);
     const totalEstimatedCost = totalCookiesSold * costMetrics.costPerCookie;
     const totalEstimatedProfit = totalRevenue - totalEstimatedCost;
-    return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit };
+    const ticketMedio = sales.length > 0 ? (totalRevenue / sales.length) : 0;
+    const margin = totalRevenue > 0 ? (totalEstimatedProfit / totalRevenue) * 100 : 0;
+    return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit, ticketMedio, margin };
   }, [sales, costMetrics]);
 
   const timeStats = useMemo(() => {
@@ -387,6 +388,7 @@ export default function CookieDashboard() {
       case 'date-asc': sorted.sort((a, b) => new Date(a.date || '9999-12-31').getTime() - new Date(b.date || '9999-12-31').getTime()); break;
       case 'date-desc': sorted.sort((a, b) => new Date(b.date || '1970-01-01').getTime() - new Date(a.date || '1970-01-01').getTime()); break;
       case 'name-asc': sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '')); break;
+      case 'product-asc': sorted.sort((a, b) => (a.productName || '').localeCompare(b.productName || '')); break;
       default: break;
     }
     return {
@@ -432,7 +434,7 @@ export default function CookieDashboard() {
   const rootCustomers = customers.filter(c => !c.referredBy);
 
   // ==========================================
-  // HANDLERS DE FORMULÁRIO (VENDAS E RESERVAS)
+  // HANDLERS (AÇÕES)
   // ==========================================
   
   const handleAddToCartQuickSale = () => {
@@ -573,13 +575,25 @@ export default function CookieDashboard() {
 
   const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
 
-  // --- HANDLERS DE EDIÇÃO ---
+  // --- HANDLERS DE EDIÇÃO (COM CONTROLE DO INDICADOR) ---
   const handleSaveEditCustomer = (e) => {
     e.preventDefault();
     if (!editingCustomer || !user) return;
+    
+    let finalReferredBy = editingCustomer.referredBy; 
+    if (editingCustomer.referredByInput !== undefined) {
+        if (editingCustomer.referredByInput === '') {
+            finalReferredBy = null;
+        } else {
+            const found = customers.find(c => (c.name || '').toLowerCase() === editingCustomer.referredByInput.toLowerCase().trim());
+            if (found) finalReferredBy = found.id;
+        }
+    }
+
     saveToDb('customers', editingCustomer.id, {
       ...editingCustomer,
-      purchases: Number(editingCustomer.purchases) || 0
+      purchases: Number(editingCustomer.purchases) || 0,
+      referredBy: finalReferredBy
     });
     setEditingCustomer(null);
   };
@@ -587,11 +601,23 @@ export default function CookieDashboard() {
   const handleSaveEditReservation = (e) => {
     e.preventDefault();
     if (!editingReservation || !user) return;
+
+    let finalReferredBy = editingReservation.referredBy; 
+    if (editingReservation.referredByInput !== undefined) {
+        if (editingReservation.referredByInput === '') {
+            finalReferredBy = null;
+        } else {
+            const found = customers.find(c => (c.name || '').toLowerCase() === editingReservation.referredByInput.toLowerCase().trim());
+            if (found) finalReferredBy = found.id;
+        }
+    }
+
     saveToDb('reservations', editingReservation.id, {
       ...editingReservation,
       quantity: Number(editingReservation.quantity) || 1,
       expectedRevenue: Number(editingReservation.expectedRevenue) || 0,
-      cookieUnits: Number(editingReservation.cookieUnits) || 1
+      cookieUnits: Number(editingReservation.cookieUnits) || 1,
+      referredBy: finalReferredBy
     });
     setEditingReservation(null);
   };
@@ -856,21 +882,21 @@ export default function CookieDashboard() {
                       <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Faturamento</p>
                       <div className="bg-green-100 dark:bg-green-900/30 p-1.5 rounded-lg text-green-600 dark:text-green-400"><DollarSign size={16} /></div>
                     </div>
-                    <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {globalMetrics.totalRevenue.toFixed(2)}</p>
+                    <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {(Number(globalMetrics.totalRevenue) || 0).toFixed(2)}</p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
                     <div className="flex justify-between items-start mb-2">
                       <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Lucro Real</p>
                       <div className="bg-emerald-100 dark:bg-emerald-900/30 p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400"><TrendingUp size={16} /></div>
                     </div>
-                    <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {globalMetrics.totalEstimatedProfit.toFixed(2)}</p>
+                    <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {(Number(globalMetrics.totalEstimatedProfit) || 0).toFixed(2)}</p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
                     <div className="flex justify-between items-start mb-2">
                       <p className="text-xs text-amber-700 dark:text-amber-400 font-medium" title="Quanto você gastaria no mercado agora para bater +1 receita">Custo Reposição (+1)</p>
                       <div className="bg-red-100 dark:bg-red-900/30 p-1.5 rounded-lg text-red-600 dark:text-red-400"><ShoppingCart size={16} /></div>
                     </div>
-                    <p className="text-xl font-bold text-red-600 dark:text-red-400">R$ {missingCostForOneBatch.toFixed(2)}</p>
+                    <p className="text-xl font-bold text-red-600 dark:text-red-400">R$ {(Number(missingCostForOneBatch) || 0).toFixed(2)}</p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
                     <div className="flex justify-between items-start mb-2">
@@ -896,10 +922,10 @@ export default function CookieDashboard() {
                      <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-center relative overflow-hidden">
                        <div className="relative z-10">
                          <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-2">Vendas Hoje</p>
-                         <p className="text-3xl font-black text-gray-800 dark:text-gray-100 mb-3">R$ {timeStats.revToday.toFixed(2)}</p>
+                         <p className="text-3xl font-black text-gray-800 dark:text-gray-100 mb-3">R$ {(Number(timeStats.revToday) || 0).toFixed(2)}</p>
                          <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold ${timeStats.todayGrowth >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
                            {timeStats.todayGrowth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
-                           {timeStats.todayGrowth > 0 ? '+' : ''}{timeStats.todayGrowth.toFixed(1)}% vs Ontem
+                           {timeStats.todayGrowth > 0 ? '+' : ''}{(Number(timeStats.todayGrowth) || 0).toFixed(1)}% vs Ontem
                          </div>
                        </div>
                        <LineChart className="absolute -bottom-4 -right-4 text-gray-50 dark:text-gray-700/50 w-32 h-32" />
@@ -907,10 +933,10 @@ export default function CookieDashboard() {
                      <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-center relative overflow-hidden">
                        <div className="relative z-10">
                          <p className="text-sm text-gray-500 dark:text-gray-400 font-medium mb-2">Últimos 7 Dias</p>
-                         <p className="text-3xl font-black text-gray-800 dark:text-gray-100 mb-3">R$ {timeStats.rev7Days.toFixed(2)}</p>
+                         <p className="text-3xl font-black text-gray-800 dark:text-gray-100 mb-3">R$ {(Number(timeStats.rev7Days) || 0).toFixed(2)}</p>
                          <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold ${timeStats.weekGrowth >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
                            {timeStats.weekGrowth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
-                           {timeStats.weekGrowth > 0 ? '+' : ''}{timeStats.weekGrowth.toFixed(1)}% vs Sem. Passada
+                           {timeStats.weekGrowth > 0 ? '+' : ''}{(Number(timeStats.weekGrowth) || 0).toFixed(1)}% vs Sem. Passada
                          </div>
                        </div>
                        <Calendar className="absolute -bottom-4 -right-4 text-gray-50 dark:text-gray-700/50 w-32 h-32" />
@@ -925,12 +951,12 @@ export default function CookieDashboard() {
                        <div className="flex justify-between items-end mb-2">
                          <div>
                            <p className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Target size={16} className="text-amber-500"/> Meta Diária</p>
-                           <p className="text-xs text-gray-400 mt-0.5">R$ {timeStats.revToday.toFixed(2)} / R$ <input type="number" className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.daily} onChange={(e) => setGoals({...goals, daily: Number(e.target.value)})}/></p>
+                           <p className="text-xs text-gray-400 mt-0.5">R$ {(Number(timeStats.revToday) || 0).toFixed(2)} / R$ <input type="number" className="w-12 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.daily} onChange={(e) => setGoals({...goals, daily: Number(e.target.value)})}/></p>
                          </div>
-                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.revToday / Math.max(goals.daily, 1)) * 100, 100).toFixed(0)}%</span>
+                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min(((Number(timeStats.revToday)||0) / Math.max(goals.daily, 1)) * 100, 100).toFixed(0)}%</span>
                        </div>
                        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
-                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.revToday / Math.max(goals.daily, 1)) * 100, 100)}%` }}></div>
+                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min(((Number(timeStats.revToday)||0) / Math.max(goals.daily, 1)) * 100, 100)}%` }}></div>
                        </div>
                      </div>
 
@@ -938,12 +964,12 @@ export default function CookieDashboard() {
                        <div className="flex justify-between items-end mb-2">
                          <div>
                            <p className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Target size={16} className="text-amber-500"/> Meta Semanal</p>
-                           <p className="text-xs text-gray-400 mt-0.5">R$ {timeStats.rev7Days.toFixed(2)} / R$ <input type="number" className="w-16 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.weekly} onChange={(e) => setGoals({...goals, weekly: Number(e.target.value)})}/></p>
+                           <p className="text-xs text-gray-400 mt-0.5">R$ {(Number(timeStats.rev7Days)||0).toFixed(2)} / R$ <input type="number" className="w-16 bg-transparent border-b border-gray-300 dark:border-gray-600 outline-none text-center text-amber-600 dark:text-amber-400 font-bold" value={goals.weekly} onChange={(e) => setGoals({...goals, weekly: Number(e.target.value)})}/></p>
                          </div>
-                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min((timeStats.rev7Days / Math.max(goals.weekly, 1)) * 100, 100).toFixed(0)}%</span>
+                         <span className="text-sm font-black text-amber-600 dark:text-amber-400">{Math.min(((Number(timeStats.rev7Days)||0) / Math.max(goals.weekly, 1)) * 100, 100).toFixed(0)}%</span>
                        </div>
                        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
-                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min((timeStats.rev7Days / Math.max(goals.weekly, 1)) * 100, 100)}%` }}></div>
+                         <div className="bg-amber-500 h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min(((Number(timeStats.rev7Days)||0) / Math.max(goals.weekly, 1)) * 100, 100)}%` }}></div>
                        </div>
                      </div>
 
@@ -952,7 +978,7 @@ export default function CookieDashboard() {
                           <Crosshair className="text-blue-500" size={20}/>
                           <div>
                             <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Projeção do Mês (se continuar assim)</p>
-                            <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {projection.toFixed(2)}</p>
+                            <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {(Number(projection)||0).toFixed(2)}</p>
                           </div>
                         </div>
                      </div>
@@ -973,13 +999,13 @@ export default function CookieDashboard() {
                     <div className="bg-green-100 dark:bg-green-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-green-600 dark:text-green-400 mb-4"><Flame size={20}/></div>
                     <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Produto Mais Lucrativo</p>
                     <p className="text-lg font-bold text-gray-800 dark:text-gray-100">{productIntel?.topProfit?.name || 'Nenhum dado'}</p>
-                    <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">R$ {productIntel?.topProfit?.profit?.toFixed(2) || 0} gerados em lucro</p>
+                    <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">R$ {(Number(productIntel?.topProfit?.profit)||0).toFixed(2)} gerados em lucro</p>
                   </div>
                   <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-blue-100 dark:border-gray-700">
                     <div className="bg-blue-100 dark:bg-blue-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400 mb-4"><UsersRound size={20}/></div>
                     <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Comportamento (Clientes)</p>
                     <div className="flex items-end gap-2 mt-1">
-                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{customerIntel.recorrentesPercent.toFixed(0)}%</p>
+                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{(Number(customerIntel.recorrentesPercent)||0).toFixed(0)}%</p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">são clientes fiéis (recorrentes).</p>
                     </div>
                     <div className="flex justify-between text-xs font-medium text-gray-400 mt-2">
@@ -1037,8 +1063,8 @@ export default function CookieDashboard() {
                         <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition mb-3 text-sm" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
                           {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
                             <>
-                              <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
-                              {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {p.price.toFixed(2)}</option>)}</optgroup>}
+                              <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {(Number(p.price)||0).toFixed(2)}</option>)}</optgroup>
+                              {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {(Number(p.price)||0).toFixed(2)}</option>)}</optgroup>}
                             </>
                           )}
                         </select>
@@ -1071,7 +1097,7 @@ export default function CookieDashboard() {
                                 {item.observation && <span className="text-[10px] text-amber-200/70 italic">Obs: {item.observation}</span>}
                               </div>
                               <div className="flex items-center gap-2">
-                                <span>R$ {item.revenue.toFixed(2)}</span>
+                                <span>R$ {(Number(item.revenue)||0).toFixed(2)}</span>
                                 <button type="button" onClick={() => setQuickSaleCart(quickSaleCart.filter((_, idx) => idx !== i))} className="text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
                               </div>
                             </div>
@@ -1095,7 +1121,7 @@ export default function CookieDashboard() {
                         <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                           <Clock className="text-amber-600 dark:text-amber-500" size={20}/> Entregas Pendentes
                         </h3>
-                        <span className="text-sm font-bold text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-lg">R$ {expectedMetrics.revenue.toFixed(2)}</span>
+                        <span className="text-sm font-bold text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-lg">R$ {(Number(expectedMetrics.revenue)||0).toFixed(2)}</span>
                       </div>
                       
                       <div className="flex-1 overflow-y-auto space-y-3 pr-2 max-h-[300px]">
@@ -1107,7 +1133,17 @@ export default function CookieDashboard() {
                               <div className="flex justify-between items-start">
                                 <div>
                                   <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{res.name}</p>
-                                  <p className="text-xs text-gray-600 dark:text-gray-300 font-medium">{res.quantity}x {res.productName}</p>
+                                  <div className="flex items-center gap-1 group relative">
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{res.quantity}x {res.productName}</p>
+                                    {res.observation && (
+                                      <div className="relative flex items-center ml-1">
+                                        <Info size={14} className="text-amber-500 cursor-help" title={res.observation} />
+                                        <div className="absolute left-6 top-1/2 transform -translate-y-1/2 hidden group-hover:block bg-gray-800 dark:bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-[100] whitespace-nowrap min-w-[120px] border border-gray-700">
+                                          {res.observation}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="text-right flex flex-col items-end gap-2">
                                   <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-gray-800 px-2 py-1 rounded-lg border border-transparent dark:border-gray-600">
@@ -1115,7 +1151,6 @@ export default function CookieDashboard() {
                                   </span>
                                 </div>
                               </div>
-                              {res.observation && <p className="text-[10px] text-amber-700/80 dark:text-amber-400/80 italic mt-1 bg-amber-100/50 dark:bg-gray-800/50 p-1.5 rounded">Obs: {res.observation}</p>}
                             </div>
                           ))
                         )}
@@ -1151,6 +1186,7 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
+                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1171,8 +1207,8 @@ export default function CookieDashboard() {
                             
                             {data.revenue > 0 && (
                               <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-gray-800 dark:bg-white text-white dark:text-gray-900 text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
-                                <span className="font-bold">Rec: R$ {data.revenue.toFixed(2)}</span>
-                                <span className="text-green-300 dark:text-green-600 text-[10px]">Lucro: R$ {data.estimatedProfit.toFixed(2)}</span>
+                                <span className="font-bold">Rec: R$ {(Number(data.revenue)||0).toFixed(2)}</span>
+                                <span className="text-green-300 dark:text-green-600 text-[10px]">Lucro: R$ {(Number(data.estimatedProfit)||0).toFixed(2)}</span>
                               </div>
                             )}
                           </div>
@@ -1212,7 +1248,7 @@ export default function CookieDashboard() {
                     </div>
                     <div className="bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-amber-100 dark:border-gray-700 mb-6">
                       <p className="text-xs text-gray-500 dark:text-gray-400">Rendimento Previsto:</p>
-                      <p className="text-lg font-black text-amber-700 dark:text-amber-500">{productionBatches * recipeConfig.yield} cookies</p>
+                      <p className="text-lg font-black text-amber-700 dark:text-amber-500">{productionBatches * (Number(recipeConfig.yield)||1)} cookies</p>
                     </div>
 
                     {!inventoryCheck.canProduce && (
@@ -1243,13 +1279,13 @@ export default function CookieDashboard() {
                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{ing.name}</p>
                                <p className="text-[10px] text-red-500 font-medium">Comprar: {ing.packagesToBuy} pct(s) ({ing.exactMissingToBuy}{ing.unit})</p>
                              </div>
-                             <p className="text-sm font-bold text-gray-700 dark:text-gray-300">R$ {ing.costToBuy.toFixed(2)}</p>
+                             <p className="text-sm font-bold text-gray-700 dark:text-gray-300">R$ {(Number(ing.costToBuy)||0).toFixed(2)}</p>
                           </div>
                         ))}
                       </div>
                       <div className="pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
                         <span className="font-bold text-gray-600 dark:text-gray-400 text-sm">Custo Ida ao Mercado:</span>
-                        <span className="font-black text-red-600 dark:text-red-400 text-lg">R$ {inventoryCheck.totalMissingCost.toFixed(2)}</span>
+                        <span className="font-black text-red-600 dark:text-red-400 text-lg">R$ {(Number(inventoryCheck.totalMissingCost)||0).toFixed(2)}</span>
                       </div>
                     </div>
                   )}
@@ -1291,7 +1327,7 @@ export default function CookieDashboard() {
                                 </div>
                               </td>
                               <td className="p-4 text-center font-medium text-gray-600 dark:text-gray-300">
-                                {ing.totalNeeded.toFixed(1)} {ing.unit}
+                                {(Number(ing.totalNeeded)||0).toFixed(1)} {ing.unit}
                               </td>
                               <td className="p-4 text-center">
                                 <div className="flex items-center justify-center gap-2">
@@ -1311,7 +1347,7 @@ export default function CookieDashboard() {
                                 ) : (
                                   <div className="flex flex-col items-center gap-1">
                                     <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Faltam {ing.packagesToBuy} pct ({ing.exactMissingToBuy}{ing.unit})</span>
-                                    <span className="text-xs font-bold text-red-600 dark:text-red-400">R$ {ing.costToBuy.toFixed(2)}</span>
+                                    <span className="text-xs font-bold text-red-600 dark:text-red-400">R$ {(Number(ing.costToBuy)||0).toFixed(2)}</span>
                                   </div>
                                 )}
                               </td>
@@ -1385,7 +1421,7 @@ export default function CookieDashboard() {
                             <div className="bg-orange-100 dark:bg-orange-900/30 p-3 rounded-full text-orange-600 dark:text-orange-400"><Tag size={20} /></div>
                             <div>
                               <p className="font-bold text-gray-800 dark:text-gray-200">{product.name}</p>
-                              <p className="text-sm font-medium text-green-600 dark:text-green-400">R$ {product.price.toFixed(2)}</p>
+                              <p className="text-sm font-medium text-green-600 dark:text-green-400">R$ {(Number(product.price)||0).toFixed(2)}</p>
                             </div>
                           </div>
                           <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors opacity-0 group-hover:opacity-100" title="Remover"><Trash2 size={18} /></button>
@@ -1405,7 +1441,7 @@ export default function CookieDashboard() {
                             <div>
                               <p className="font-bold text-gray-800 dark:text-gray-200">{product.name}</p>
                               <div className="flex items-center gap-2">
-                                <p className="text-sm font-medium text-green-700 dark:text-green-400">R$ {product.price.toFixed(2)}</p>
+                                <p className="text-sm font-medium text-green-700 dark:text-green-400">R$ {(Number(product.price)||0).toFixed(2)}</p>
                                 <span className="text-[10px] bg-white dark:bg-gray-900 px-2 py-0.5 rounded-full text-amber-700 dark:text-amber-400 font-bold border border-amber-200 dark:border-gray-700">{product.units} cookies</span>
                               </div>
                             </div>
@@ -1454,19 +1490,19 @@ export default function CookieDashboard() {
                   <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
                       <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Package size={16}/><h3 className="font-medium text-xs">Custo da Receita Base</h3></div>
-                      <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.totalRecipeCost.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {(Number(costMetrics.totalRecipeCost)||0).toFixed(2)}</p>
                     </div>
                     <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
                       <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><Calculator size={16}/><h3 className="font-medium text-xs">Custo Unitário (Massa)</h3></div>
-                      <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {costMetrics.costPerCookie.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-gray-800 dark:text-gray-100">R$ {(Number(costMetrics.costPerCookie)||0).toFixed(2)}</p>
                     </div>
                     <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
                       <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><DollarSign size={16} className="text-green-500"/><h3 className="font-medium text-xs text-green-700 dark:text-green-400">Lucro Médio Unitário</h3></div>
-                      <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {costMetrics.profit.toFixed(2)}</p>
+                      <p className="text-xl font-bold text-green-600 dark:text-green-400">R$ {(Number(costMetrics.profit)||0).toFixed(2)}</p>
                     </div>
                     <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 transition-colors">
                       <div className="flex items-center gap-2 mb-1 text-gray-500 dark:text-gray-400"><TrendingUp size={16} className="text-purple-500"/><h3 className="font-medium text-xs text-purple-700 dark:text-purple-400">Margem (Produto Base)</h3></div>
-                      <p className="text-xl font-bold text-purple-600 dark:text-purple-400">{costMetrics.profitMargin.toFixed(1)}%</p>
+                      <p className="text-xl font-bold text-purple-600 dark:text-purple-400">{(Number(costMetrics.profitMargin)||0).toFixed(1)}%</p>
                     </div>
                   </div>
                   <div className="bg-amber-50 dark:bg-gray-800 p-5 rounded-2xl border border-amber-200 dark:border-gray-700 transition-colors">
@@ -1507,7 +1543,7 @@ export default function CookieDashboard() {
                           const ingCost = (Number(ing.bulkPrice||0) / Number(ing.bulkQty||1)) * Number(ing.recipeQty||0);
                           return (
                             <tr key={ing.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                              <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{ing.name}</td><td className="p-4 text-gray-600 dark:text-gray-400">R$ {Number(ing.bulkPrice||0).toFixed(2)}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.bulkQty} {ing.unit}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.recipeQty} {ing.unit}</td><td className="p-4 text-right font-medium text-amber-700 dark:text-amber-400">R$ {ingCost.toFixed(2)}</td>
+                              <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{ing.name}</td><td className="p-4 text-gray-600 dark:text-gray-400">R$ {(Number(ing.bulkPrice)||0).toFixed(2)}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.bulkQty} {ing.unit}</td><td className="p-4 text-gray-600 dark:text-gray-400">{ing.recipeQty} {ing.unit}</td><td className="p-4 text-right font-medium text-amber-700 dark:text-amber-400">R$ {ingCost.toFixed(2)}</td>
                             </tr>
                           );
                         })}
@@ -1552,7 +1588,7 @@ export default function CookieDashboard() {
                           <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>{customer.referralsCount}</span></td>
                           <td className="p-4 text-center font-medium text-amber-700 dark:text-amber-400">{customer.purchases || 0}</td>
                           <td className="p-4 text-center flex items-center justify-center gap-2">
-                             <button onClick={() => setEditingCustomer(customer)} className="p-2 text-amber-500 hover:bg-amber-50 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
+                             <button onClick={() => setEditingCustomer({...customer, referredByInput: customer.referrerName === 'Ninguém (Direto)' ? '' : customer.referrerName})} className="p-2 text-amber-500 hover:bg-amber-50 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
                              <button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button>
                           </td>
                         </tr>
@@ -1640,11 +1676,12 @@ export default function CookieDashboard() {
                     <div className="p-4 border-b border-amber-200 dark:border-amber-700/50 bg-amber-100/50 dark:bg-amber-900/30 flex justify-between items-center">
                        <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2"><Clock size={18}/> Encomendas Pendentes</h3>
                        <div className="flex items-center gap-2">
-                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-amber-700 dark:text-amber-500">Filtrar por:</span>
+                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-amber-700 dark:text-amber-500 hidden sm:block">Filtrar por:</span>
                          <select className="text-xs bg-transparent outline-none font-bold text-amber-900 dark:text-amber-200 cursor-pointer" value={reservationSortBy} onChange={e => setReservationSortBy(e.target.value)}>
                            <option value="date-asc">Data ⬆</option>
                            <option value="date-desc">Data ⬇</option>
-                           <option value="name-asc">Nome (A-Z)</option>
+                           <option value="name-asc">Nome Cliente (A-Z)</option>
+                           <option value="product-asc">Produto (A-Z)</option>
                          </select>
                        </div>
                     </div>
@@ -1665,14 +1702,28 @@ export default function CookieDashboard() {
                             <tr key={res.id} className="border-b border-amber-50 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-750 transition-colors">
                               <td className="p-3">
                                 <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{res.name}</p>
-                                <p className="text-xs text-gray-600 dark:text-gray-400">{res.quantity}x {res.productName}</p>
-                                {res.observation && <p className="text-[10px] text-amber-600 dark:text-amber-400 italic mt-0.5">Obs: {res.observation}</p>}
+                                
+                                {/* A NOVA FORMA ELEGANTE DE MOSTRAR AS OBSERVAÇÕES */}
+                                <div className="flex flex-col gap-1 mt-0.5">
+                                  <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{res.quantity}x {res.productName}</p>
+                                  {res.observation && (
+                                    <span 
+                                      className="inline-flex items-center gap-1 w-fit bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-2 py-1 rounded-md text-[10px] cursor-help font-bold border border-amber-200 dark:border-amber-700/50"
+                                      title={res.observation}
+                                    >
+                                      <Info size={12} /> Obs. do Pedido
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="p-3 text-center text-xs font-bold text-amber-700 dark:text-amber-500">{res.date ? new Date(res.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}</td>
                               <td className="p-3 text-right text-sm font-bold text-gray-700 dark:text-gray-300">R$ {(Number(res.expectedRevenue)||0).toFixed(2)}</td>
                               <td className="p-3 text-center flex items-center justify-center gap-1 mt-2">
                                 <button onClick={() => handleUpdateReservationStatus(res.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Concluir (Envia Venda)"><CheckCircle size={18}/></button>
-                                <button onClick={() => setEditingReservation(res)} className="text-amber-600 hover:bg-amber-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Editar"><Edit size={16}/></button>
+                                <button onClick={() => {
+                                  const referrer = customers.find(c => c.id === res.referredBy);
+                                  setEditingReservation({...res, referredByInput: referrer ? referrer.name : ''});
+                                }} className="text-amber-600 hover:bg-amber-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Editar"><Edit size={16}/></button>
                                 <button onClick={() => handleUpdateReservationStatus(res.id, 'cancelled')} className="text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Cancelar"><XCircle size={18}/></button>
                               </td>
                             </tr>
@@ -1701,7 +1752,10 @@ export default function CookieDashboard() {
                                 {res.status === 'completed' ? <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">Concluída</span> : <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Cancelada</span>}
                               </td>
                               <td className="p-3 text-right">
-                                <button onClick={() => setEditingReservation(res)} className="text-gray-400 hover:text-amber-500 p-1 rounded" title="Editar Histórico"><Edit size={14}/></button>
+                                <button onClick={() => {
+                                  const referrer = customers.find(c => c.id === res.referredBy);
+                                  setEditingReservation({...res, referredByInput: referrer ? referrer.name : ''});
+                                }} className="text-gray-400 hover:text-amber-500 p-1 rounded" title="Editar Histórico"><Edit size={14}/></button>
                                 <button onClick={() => handleDeleteReservation(res.id)} className="text-gray-400 hover:text-red-500 p-1 rounded" title="Excluir Definitivamente"><Trash2 size={14}/></button>
                               </td>
                             </tr>
@@ -1811,7 +1865,7 @@ export default function CookieDashboard() {
                     <span className="text-green-400 font-bold">R$ {globalMetrics.totalRevenue.toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-400">Custo Histórico <span className="text-[10px] block">Ficha Técnica ({globalMetrics.totalCookiesSold} un.)</span></span>
+                    <span className="text-gray-400">Custo Histórico <span className="text-[10px] block">Ficha Técnica ({(Number(globalMetrics.totalCookiesSold)||0)} un.)</span></span>
                     <span className="text-red-400 font-bold">-R$ {globalMetrics.totalEstimatedCost.toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between mt-2 pt-2 border-t border-gray-700 mb-3">
@@ -1820,7 +1874,7 @@ export default function CookieDashboard() {
                  </div>
                  <div className="bg-gray-900 rounded-xl p-3 border border-gray-700">
                     <span className="text-gray-400 text-xs block mb-1">Custo para bater +1 receita hoje (Mercado):</span>
-                    <span className="text-red-400 font-bold block text-right">R$ {missingCostForOneBatch.toFixed(2)}</span>
+                    <span className="text-red-400 font-bold block text-right">R$ {(Number(missingCostForOneBatch)||0).toFixed(2)}</span>
                  </div>
                </div>
              )}
@@ -1838,7 +1892,7 @@ export default function CookieDashboard() {
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
                  <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Reposição</span>
-                 <span className="font-black text-red-400">-R$ {missingCostForOneBatch.toFixed(2)}</span>
+                 <span className="font-black text-red-400">-R$ {(Number(missingCostForOneBatch)||0).toFixed(2)}</span>
                </div>
                <div className="h-6 w-px bg-gray-700/50"></div>
                <div className="flex flex-col items-center">
@@ -1865,6 +1919,10 @@ export default function CookieDashboard() {
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Qtd. Compras</label>
                     <input type="number" min="0" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.purchases} onChange={e => setEditingCustomer({...editingCustomer, purchases: e.target.value})} />
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Quem indicou? (Opcional)</label>
+                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.referredByInput !== undefined ? editingCustomer.referredByInput : ''} onChange={e => setEditingCustomer({...editingCustomer, referredByInput: e.target.value})} placeholder="Busque ou apague para remover..." />
+                  </div>
                   <button type="submit" className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl mt-2 hover:bg-amber-700">Salvar Alterações</button>
                 </form>
               </div>
@@ -1883,6 +1941,10 @@ export default function CookieDashboard() {
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Cliente</label>
                     <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.name} onChange={e => handleEditReservationChange('name', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Quem indicou? (Opcional)</label>
+                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.referredByInput !== undefined ? editingReservation.referredByInput : ''} onChange={e => handleEditReservationChange('referredByInput', e.target.value)} placeholder="Busque ou apague para remover..." />
                   </div>
                   <div className="flex gap-3">
                     <div className="w-2/3">
