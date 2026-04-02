@@ -311,6 +311,7 @@ export default function CookieDashboard() {
     const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
     const last7Days = new Date(today); last7Days.setDate(last7Days.getDate() - 6);
     const previous7Days = new Date(last7Days); previous7Days.setDate(previous7Days.getDate() - 7);
+    
     let revToday = 0, revYesterday = 0, rev7Days = 0, revPrev7Days = 0;
 
     sales.forEach(s => {
@@ -319,14 +320,17 @@ export default function CookieDashboard() {
       if (isNaN(d.getTime())) return;
       const localD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       const rev = Number(s.revenue) || 0;
+      
       if (localD.getTime() === today.getTime()) revToday += rev;
       else if (localD.getTime() === yesterday.getTime()) revYesterday += rev;
+      
       if (localD >= last7Days && localD <= today) rev7Days += rev;
-      else if (localD >= previous7Days && localD < last7Days) revPrev7Days += rev;
+      else if (localD >= previous7Days && localD < last7Days) revPrev7Days += s.revenue;
     });
 
     const todayGrowth = revYesterday === 0 ? (revToday > 0 ? 100 : 0) : ((revToday - revYesterday) / revYesterday) * 100;
     const weekGrowth = revPrev7Days === 0 ? (rev7Days > 0 ? 100 : 0) : ((rev7Days - revPrev7Days) / revPrev7Days) * 100;
+
     return { revToday, revYesterday, todayGrowth, rev7Days, revPrev7Days, weekGrowth };
   }, [sales]);
 
@@ -335,6 +339,7 @@ export default function CookieDashboard() {
     const today = new Date();
     const currentDay = today.getDay();
     const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+    
     const currentMonday = new Date(today);
     currentMonday.setDate(today.getDate() + diffToMonday);
     currentMonday.setHours(0,0,0,0);
@@ -345,6 +350,7 @@ export default function CookieDashboard() {
       const end = new Date(start);
       end.setDate(start.getDate() + 6);
       end.setHours(23,59,59,999);
+      
       const format = (dt) => `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth()+1).padStart(2, '0')}`;
       stats.push({ label: `${format(start)} a \n${format(end)}`, start, end, salesQty: 0, revenue: 0, estimatedProfit: 0 });
     }
@@ -353,6 +359,7 @@ export default function CookieDashboard() {
       if (!sale.date) return;
       const saleDate = new Date(sale.date);
       if (isNaN(saleDate.getTime())) return;
+      
       const week = stats.find(w => saleDate >= w.start && saleDate <= w.end);
       if (week) {
         const qty = Number(sale.cookieUnits) || Number(sale.quantity) || 0;
@@ -363,6 +370,8 @@ export default function CookieDashboard() {
     });
     return stats;
   }, [sales, costMetrics]);
+
+  const maxWeeklyRevenue = useMemo(() => Math.max(...weeklyStats.map(m => m.revenue), 10), [weeklyStats]);
 
   const productIntel = useMemo(() => {
     if (products.length === 0 || sales.length === 0) return null;
@@ -413,6 +422,32 @@ export default function CookieDashboard() {
     return { revenue, cookies, batchesNeeded };
   }, [sortedReservations.pending, recipeConfig.yield]);
 
+  const handleUpdateStock = (id, val) => {
+    const newStock = parseFloat(val) || 0;
+    const item = ingredients.find(i => i.id === id);
+    if(item && user) saveToDb('ingredients', id, { ...item, currentStock: newStock });
+  };
+
+  const handleToggleWaste = (id, currentVal) => {
+    const item = ingredients.find(i => i.id === id);
+    if(item && user) saveToDb('ingredients', id, { ...item, applyWaste: !currentVal });
+  };
+
+  const handleProduce = () => {
+    ingredients.forEach(ing => {
+      const itemCheck = inventoryCheck.list.find(i => i.id === ing.id);
+      if(itemCheck) {
+        let current = parseFloat(ing.currentStock) || 0;
+        if (itemCheck.packagesToBuy > 0) current += itemCheck.exactMissingToBuy;
+        const newStock = Math.max(0, current - itemCheck.totalNeeded);
+        if(user) saveToDb('ingredients', ing.id, { ...ing, currentStock: newStock });
+      }
+    });
+    setProductionBatches(1);
+    alert("Produção registada com sucesso! O estoque foi deduzido.");
+  };
+
+  // --- CÁLCULOS DE CLIENTES ---
   const customersWithStats = useMemo(() => {
     return customers.map(customer => {
       const referralsCount = customers.filter(c => c.referredBy === customer.id).length;
@@ -435,31 +470,53 @@ export default function CookieDashboard() {
     return sorted;
   }, [customersWithStats, customerSortBy]);
 
-  // --- HANDLERS E FUNÇÕES ADMIN ---
+  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
+  const rootCustomers = useMemo(() => customers.filter(c => !c.referredBy), [customers]);
+
+  // ==========================================
+  // HANDLERS DE FORMULÁRIO (VENDAS E RESERVAS)
+  // ==========================================
+  
   const handleAddToCartQuickSale = () => {
     if (!quickSale.quantity || !quickSale.revenue) return;
     const p = products.find(prod => prod.id === quickSale.productId);
+    
     setQuickSaleCart([...quickSaleCart, {
-      productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(quickSale.quantity),
-      cookieUnits: (p?.units || 1) * Number(quickSale.quantity), revenue: Number(quickSale.revenue), observation: quickSale.observation
+      productId: p ? p.id : 'avulso', 
+      productName: p ? p.name : 'Produto Avulso',
+      quantity: Number(quickSale.quantity),
+      cookieUnits: (p?.units || 1) * Number(quickSale.quantity),
+      revenue: Number(quickSale.revenue),
+      observation: quickSale.observation
     }]);
     setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p ? p.price : recipeConfig.salePrice, observation: '' }));
   };
 
   const handleFinalizeQuickSale = (e) => {
-    e.preventDefault(); if (!quickSale.customerName || !user) return;
+    e.preventDefault();
+    if (!quickSale.customerName || !user) return;
+
     let finalCart = [...quickSaleCart];
     if (quickSale.quantity > 0 && quickSale.revenue > 0) {
       const p = products.find(prod => prod.id === quickSale.productId);
-      finalCart.push({ productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(quickSale.quantity), cookieUnits: (p?.units || 1) * Number(quickSale.quantity), revenue: Number(quickSale.revenue), observation: quickSale.observation });
+      finalCart.push({
+        productId: p ? p.id : 'avulso', 
+        productName: p ? p.name : 'Produto Avulso',
+        quantity: Number(quickSale.quantity), 
+        cookieUnits: (p?.units || 1) * Number(quickSale.quantity), 
+        revenue: Number(quickSale.revenue),
+        observation: quickSale.observation
+      });
     }
     if (finalCart.length === 0) return;
 
+    const todayYMD = getTodayYMD();
     let saleDateIso = new Date().toISOString();
-    if (quickSale.date && quickSale.date !== getTodayYMD()) {
+    if (quickSale.date && quickSale.date !== todayYMD) {
       const parsedDate = new Date(`${quickSale.date}T12:00:00`);
       if (!isNaN(parsedDate.getTime())) saleDateIso = parsedDate.toISOString();
     }
+
     let finalReferredBy = null;
     if (quickSale.referredByInput) {
        const found = customers.find(c => (c.name || '').toLowerCase() === quickSale.referredByInput.toLowerCase().trim());
@@ -468,32 +525,54 @@ export default function CookieDashboard() {
 
     finalCart.forEach(item => {
       const newSaleId = Math.random().toString(36).substr(2, 9);
-      saveToDb('sales', newSaleId, { id: newSaleId, date: saleDateIso, quantity: item.quantity, cookieUnits: item.cookieUnits, revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName, observation: item.observation || '' });
+      saveToDb('sales', newSaleId, {
+        id: newSaleId, date: saleDateIso, quantity: item.quantity, cookieUnits: item.cookieUnits, 
+        revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName,
+        observation: item.observation || ''
+      });
     });
 
     const existingCustomer = customers.find(c => (c.name || '').toLowerCase() === quickSale.customerName.toLowerCase().trim());
     if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: (Number(existingCustomer.purchases) || 0) + 1 });
-    else saveToDb('customers', Math.random().toString(36).substr(2, 9), { id: Math.random().toString(36).substr(2, 9), name: quickSale.customerName.trim(), referredBy: finalReferredBy, purchases: 1 });
+    else {
+      const newCustId = Math.random().toString(36).substr(2, 9);
+      saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: finalReferredBy, purchases: 1 });
+    }
 
-    setQuickSaleCart([]); setQuickSale({ customerName: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD(), observation: '' });
+    setQuickSaleCart([]);
+    setQuickSale({ customerName: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD(), observation: '' });
   };
 
   const handleAddToCartReservation = () => {
     if (!newReservation.quantity) return;
     const p = products.find(prod => prod.id === newReservation.productId);
+    
     setReservationCart([...reservationCart, {
-      productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(newReservation.quantity),
-      cookieUnits: (p?.units || 1) * Number(newReservation.quantity), expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity), observation: newReservation.observation
+      productId: p ? p.id : 'avulso', 
+      productName: p ? p.name : 'Produto Avulso', 
+      quantity: Number(newReservation.quantity),
+      cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
+      expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity),
+      observation: newReservation.observation
     }]);
     setNewReservation(prev => ({ ...prev, quantity: 1, observation: '' }));
   };
 
   const handleFinalizeReservation = (e) => {
-    e.preventDefault(); if (!newReservation.name || !user) return;
+    e.preventDefault();
+    if (!newReservation.name || !user) return;
+
     let finalCart = [...reservationCart];
     if (newReservation.quantity > 0) {
       const p = products.find(prod => prod.id === newReservation.productId);
-      finalCart.push({ productId: p ? p.id : 'avulso', productName: p ? p.name : 'Produto Avulso', quantity: Number(newReservation.quantity), cookieUnits: (p?.units || 1) * Number(newReservation.quantity), expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity), observation: newReservation.observation });
+      finalCart.push({
+        productId: p ? p.id : 'avulso', 
+        productName: p ? p.name : 'Produto Avulso', 
+        quantity: Number(newReservation.quantity),
+        cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
+        expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity),
+        observation: newReservation.observation
+      });
     }
     if (finalCart.length === 0) return;
 
@@ -505,9 +584,16 @@ export default function CookieDashboard() {
 
     finalCart.forEach(item => {
       const newId = Math.random().toString(36).substr(2, 9);
-      saveToDb('reservations', newId, { id: newId, name: newReservation.name.trim(), referredBy: finalReferredBy, productId: item.productId, productName: item.productName, quantity: item.quantity, cookieUnits: item.cookieUnits, expectedRevenue: item.expectedRevenue, date: newReservation.date, status: 'pending', observation: item.observation || '' });
+      saveToDb('reservations', newId, { 
+        id: newId, name: newReservation.name.trim(), referredBy: finalReferredBy,
+        productId: item.productId, productName: item.productName,
+        quantity: item.quantity, cookieUnits: item.cookieUnits, expectedRevenue: item.expectedRevenue,
+        date: newReservation.date, status: 'pending', observation: item.observation || ''
+      });
     });
-    setReservationCart([]); setNewReservation({ name: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, date: '', observation: '' });
+
+    setReservationCart([]);
+    setNewReservation({ name: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, date: '', observation: '' });
   };
   
   const handleUpdateReservationStatus = (id, status) => {
@@ -519,7 +605,10 @@ export default function CookieDashboard() {
           saveToDb('sales', newSaleId, { id: newSaleId, date: new Date().toISOString(), quantity: r.quantity, cookieUnits: r.cookieUnits, revenue: r.expectedRevenue, customerName: r.name, productName: r.productName, observation: r.observation || '' });
           const existingCustomer = customers.find(c => (c.name || '').toLowerCase() === (r.name || '').toLowerCase().trim());
           if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: (Number(existingCustomer.purchases) || 0) + 1 });
-          else saveToDb('customers', Math.random().toString(36).substr(2, 9), { id: Math.random().toString(36).substr(2, 9), name: (r.name || '').trim(), referredBy: r.referredBy || null, purchases: 1 });
+          else {
+              const newCustId = Math.random().toString(36).substr(2, 9);
+              saveToDb('customers', newCustId, { id: newCustId, name: (r.name || '').trim(), referredBy: r.referredBy || null, purchases: 1 });
+          }
       }
     }
   };
@@ -954,7 +1043,7 @@ export default function CookieDashboard() {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Senha</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input type="password" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="Sua senha secreta" value={password} onChange={(e) => setPassword(e.target.value)} />
+                <input type="password" required className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 transition-colors" placeholder="Mínimo de 6 caracteres" value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
               {authMode === 'login' && (
                 <div className="text-right mt-2">
@@ -1021,7 +1110,7 @@ export default function CookieDashboard() {
            <button onClick={() => setActiveTab('dashboard')} className={`p-2 rounded-lg ${activeTab === 'dashboard' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><BarChart3 size={24}/></button>
            <button onClick={() => setActiveTab('inventory')} className={`p-2 rounded-lg ${activeTab === 'inventory' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><ClipboardList size={24}/></button>
            <button onClick={() => setActiveTab('reservations')} className={`p-2 rounded-lg ${activeTab === 'reservations' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><CalendarCheck size={24}/></button>
-           <button onClick={() => setActiveTab('store_settings')} className={`p-2 rounded-lg ${activeTab === 'store_settings' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Store size={24}/></button>
+           <button onClick={() => setActiveTab('costs')} className={`p-2 rounded-lg ${activeTab === 'costs' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400' : 'text-gray-500'}`}><Calculator size={24}/></button>
            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg text-gray-500">{darkMode ? <Sun size={24} /> : <Moon size={24} />}</button>
         </div>
 
@@ -1427,6 +1516,7 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
+                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
