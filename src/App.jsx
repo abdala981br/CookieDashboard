@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 // IMPORTAÇÕES DO FIREBASE
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
-// Adicionada a importação do initializeFirestore para forçar a ligação segura
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, initializeFirestore } from 'firebase/firestore';
 
 // IMPORTAÇÕES DOS ÍCONES
@@ -13,7 +12,7 @@ import {
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
   AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
-  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -24,7 +23,6 @@ const firebaseConfig = {
   storageBucket: "cookiedash.firebasestorage.app",
   messagingSenderId: "165689377990",
   appId: "1:165689377990:web:266b6edaed2a8aee48c3c7"
-  // measurementId removido para evitar bloqueios do Opera/AdBlockers
 };
 
 // --- LIGANDO O MOTOR DO FIREBASE ---
@@ -33,7 +31,7 @@ const appId = 'cookie-dash-app';
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  // 🔥 SOLUÇÃO OPERA: Força Long Polling para contornar o bloqueio de WebSockets do navegador
+  // Força Long Polling para contornar bloqueios de navegadores (Opera/Brave)
   db = initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch (e) { console.error("Erro ao iniciar Firebase:", e); }
 
@@ -80,21 +78,25 @@ export default function CookieDashboard() {
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
   // Estados de interface (Formulários)
-  const [batchDate, setBatchDate] = useState('');
-  const [newCustomer, setNewCustomer] = useState({ name: '', referredBy: '', purchases: 1 });
   const [newSuggestion, setNewSuggestion] = useState({ type: 'flavor', text: '' });
   const [newProduct, setNewProduct] = useState({ name: '', price: '', type: 'single', units: 2 });
   
   // Carrinhos de Múltiplos Itens (Vendas e Reservas)
-  const [quickSale, setQuickSale] = useState({ customerName: '', referredBy: '', productId: '', quantity: 1, revenue: 0, date: getTodayYMD() });
+  const [quickSale, setQuickSale] = useState({ customerName: '', referredByInput: '', productId: '', quantity: 1, revenue: 0, date: getTodayYMD(), observation: '' });
   const [quickSaleCart, setQuickSaleCart] = useState([]);
   
-  const [newReservation, setNewReservation] = useState({ name: '', referredBy: '', productId: '', quantity: 1, date: '' });
+  const [newReservation, setNewReservation] = useState({ name: '', referredByInput: '', productId: '', quantity: 1, date: '', observation: '' });
   const [reservationCart, setReservationCart] = useState([]);
+
+  // Estados de Edição (Modais)
+  const [editingCustomer, setEditingCustomer] = useState(null);
+  const [editingReservation, setEditingReservation] = useState(null);
 
   const [productionBatches, setProductionBatches] = useState(1);
 
   const [customerSortBy, setCustomerSortBy] = useState('name-asc');
+  const [reservationSortBy, setReservationSortBy] = useState('date-asc');
+  
   const [suggestionMatchContext, setSuggestionMatchContext] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
@@ -184,6 +186,11 @@ export default function CookieDashboard() {
     if (!newReservation.productId && products.length > 0) setNewReservation(prev => ({ ...prev, productId: products[0].id }));
   }, [products]);
 
+  // --- LISTA DE CLIENTES ALFABÉTICA (Para a busca digitável) ---
+  const sortedCustomersAlpha = useMemo(() => {
+    return [...customers].sort((a, b) => a.name.localeCompare(b.name));
+  }, [customers]);
+
   // --- CÁLCULOS DA FICHA TÉCNICA E CUSTOS ---
   const costMetrics = useMemo(() => {
     const totalRecipeCost = ingredients.reduce((acc, ing) => acc + ((ing.bulkPrice / ing.bulkQty) * ing.recipeQty), 0);
@@ -219,7 +226,6 @@ export default function CookieDashboard() {
     return { list, totalMissingCost, canProduce };
   }, [ingredients, productionBatches]);
 
-  // Cálculo exclusivo para o rodapé: quanto custa para fazer +1 receita exata hoje (Comprando pacotes inteiros)
   const missingCostForOneBatch = useMemo(() => {
     return ingredients.reduce((sum, ing) => {
       const wasteFactor = ing.applyWaste ? 1.02 : 1; 
@@ -245,7 +251,6 @@ export default function CookieDashboard() {
     return { totalRevenue, totalCookiesSold, totalEstimatedCost, totalEstimatedProfit };
   }, [sales, costMetrics]);
 
-  // 2. Desempenho no Tempo
   const timeStats = useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -258,7 +263,6 @@ export default function CookieDashboard() {
     sales.forEach(s => {
       if (!s.date) return;
       const d = new Date(s.date);
-      // Ignora timezone para comparação simples
       const localD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       
       if (localD.getTime() === today.getTime()) revToday += s.revenue;
@@ -274,7 +278,6 @@ export default function CookieDashboard() {
     return { revToday, revYesterday, todayGrowth, rev7Days, revPrev7Days, weekGrowth };
   }, [sales]);
 
-  // Gráfico de Histórico
   const weeklyStats = useMemo(() => {
     const stats = [];
     const today = new Date();
@@ -309,7 +312,6 @@ export default function CookieDashboard() {
     return stats;
   }, [sales, costMetrics]);
 
-  // 3. Inteligência de Produto & Cliente
   const productIntel = useMemo(() => {
     if (products.length === 0 || sales.length === 0) return null;
     const pStats = products.map(p => {
@@ -332,7 +334,6 @@ export default function CookieDashboard() {
     return { novos, recorrentes, recorrentesPercent };
   }, [customers]);
 
-  // 4. Projeção Mensal
   const projection = useMemo(() => {
     const currentMonth = new Date().getMonth();
     const revThisMonth = sales.filter(s => s.date && new Date(s.date).getMonth() === currentMonth).reduce((a,b)=>a+b.revenue, 0);
@@ -341,20 +342,27 @@ export default function CookieDashboard() {
     return (revThisMonth / daysPassed) * daysInMonth;
   }, [sales]);
 
-  // --- CÁLCULOS DE PREVISÃO E RESERVAS ---
-  const pendingReservationsList = useMemo(() => {
-    return reservations.filter(r => r.status === 'pending').sort((a, b) => {
-      if (!a.date) return 1; if (!b.date) return -1;
-      return new Date(a.date) - new Date(b.date);
-    });
-  }, [reservations]);
+  // --- CÁLCULOS DE RESERVAS ORDENADAS E FILTRADAS ---
+  const sortedReservations = useMemo(() => {
+    let sorted = [...reservations];
+    switch(reservationSortBy) {
+      case 'date-asc': sorted.sort((a, b) => new Date(a.date || '9999-12-31') - new Date(b.date || '9999-12-31')); break;
+      case 'date-desc': sorted.sort((a, b) => new Date(b.date || '1970-01-01') - new Date(a.date || '1970-01-01')); break;
+      case 'name-asc': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
+      default: break;
+    }
+    return {
+      pending: sorted.filter(r => r.status === 'pending'),
+      past: sorted.filter(r => r.status !== 'pending')
+    };
+  }, [reservations, reservationSortBy]);
 
   const expectedMetrics = useMemo(() => {
     let revenue = 0; let cookies = 0;
-    pendingReservationsList.forEach(r => { revenue += r.expectedRevenue || 0; cookies += r.cookieUnits || r.quantity || 0; });
+    sortedReservations.pending.forEach(r => { revenue += r.expectedRevenue || 0; cookies += r.cookieUnits || r.quantity || 0; });
     const batchesNeeded = recipeConfig.yield > 0 ? Math.ceil(cookies / recipeConfig.yield) : 0;
     return { revenue, cookies, batchesNeeded };
-  }, [pendingReservationsList, recipeConfig.yield]);
+  }, [sortedReservations.pending, recipeConfig.yield]);
 
   const handleUpdateStock = (id, val) => {
     const newStock = parseFloat(val) || 0;
@@ -390,7 +398,6 @@ export default function CookieDashboard() {
     });
   }, [customers]);
 
-  // SISTEMA DE RECOMPENSAS
   const pendingRewards = useMemo(() => {
     return customersWithStats.filter(c => c.referralsCount === 2 || (c.referralsCount >= 5 && c.referralsCount % 5 === 0));
   }, [customersWithStats]);
@@ -407,12 +414,8 @@ export default function CookieDashboard() {
     return sorted;
   }, [customersWithStats, customerSortBy]);
 
-  const topReferrers = useMemo(() => [...customersWithStats].sort((a, b) => b.referralsCount - a.referralsCount).slice(0, 5), [customersWithStats]);
-  const maxWeeklyRevenue = Math.max(...weeklyStats.map(m => m.revenue), 10);
-  const rootCustomers = customers.filter(c => !c.referredBy);
-
   // ==========================================
-  // HANDLERS (AÇÕES)
+  // HANDLERS DE FORMULÁRIO (VENDAS E RESERVAS)
   // ==========================================
   
   const handleAddToCartQuickSale = () => {
@@ -424,9 +427,10 @@ export default function CookieDashboard() {
       productName: p ? p.name : 'Produto Avulso',
       quantity: Number(quickSale.quantity),
       cookieUnits: (p?.units || 1) * Number(quickSale.quantity),
-      revenue: Number(quickSale.revenue)
+      revenue: Number(quickSale.revenue),
+      observation: quickSale.observation
     }]);
-    setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p ? p.price : recipeConfig.salePrice }));
+    setQuickSale(prev => ({ ...prev, quantity: 1, revenue: p ? p.price : recipeConfig.salePrice, observation: '' }));
   };
 
   const handleFinalizeQuickSale = (e) => {
@@ -441,7 +445,8 @@ export default function CookieDashboard() {
         productName: p ? p.name : 'Produto Avulso',
         quantity: Number(quickSale.quantity), 
         cookieUnits: (p?.units || 1) * Number(quickSale.quantity), 
-        revenue: Number(quickSale.revenue)
+        revenue: Number(quickSale.revenue),
+        observation: quickSale.observation
       });
     }
     if (finalCart.length === 0) return;
@@ -452,11 +457,19 @@ export default function CookieDashboard() {
       saleDateIso = new Date(`${quickSale.date}T12:00:00`).toISOString();
     }
 
+    // Traduz o input de Indicação para ID real se existir
+    let finalReferredBy = null;
+    if (quickSale.referredByInput) {
+       const found = customers.find(c => c.name.toLowerCase() === quickSale.referredByInput.toLowerCase().trim());
+       if (found) finalReferredBy = found.id;
+    }
+
     finalCart.forEach(item => {
       const newSaleId = Math.random().toString(36).substr(2, 9);
       saveToDb('sales', newSaleId, {
         id: newSaleId, date: saleDateIso, quantity: item.quantity, cookieUnits: item.cookieUnits, 
-        revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName
+        revenue: item.revenue, customerName: quickSale.customerName.trim(), productName: item.productName,
+        observation: item.observation || ''
       });
     });
 
@@ -464,11 +477,11 @@ export default function CookieDashboard() {
     if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
     else {
       const newCustId = Math.random().toString(36).substr(2, 9);
-      saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: quickSale.referredBy || null, purchases: 1 });
+      saveToDb('customers', newCustId, { id: newCustId, name: quickSale.customerName.trim(), referredBy: finalReferredBy, purchases: 1 });
     }
 
     setQuickSaleCart([]);
-    setQuickSale({ customerName: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD() });
+    setQuickSale({ customerName: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, revenue: products[0]?.price || recipeConfig.salePrice, date: getTodayYMD(), observation: '' });
   };
 
   const handleAddToCartReservation = () => {
@@ -480,9 +493,10 @@ export default function CookieDashboard() {
       productName: p ? p.name : 'Produto Avulso', 
       quantity: Number(newReservation.quantity),
       cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
-      expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity)
+      expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity),
+      observation: newReservation.observation
     }]);
-    setNewReservation(prev => ({ ...prev, quantity: 1 }));
+    setNewReservation(prev => ({ ...prev, quantity: 1, observation: '' }));
   };
 
   const handleFinalizeReservation = (e) => {
@@ -497,23 +511,30 @@ export default function CookieDashboard() {
         productName: p ? p.name : 'Produto Avulso', 
         quantity: Number(newReservation.quantity),
         cookieUnits: (p?.units || 1) * Number(newReservation.quantity), 
-        expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity)
+        expectedRevenue: (p ? p.price : recipeConfig.salePrice) * Number(newReservation.quantity),
+        observation: newReservation.observation
       });
     }
     if (finalCart.length === 0) return;
 
+    let finalReferredBy = null;
+    if (newReservation.referredByInput) {
+       const found = customers.find(c => c.name.toLowerCase() === newReservation.referredByInput.toLowerCase().trim());
+       if (found) finalReferredBy = found.id;
+    }
+
     finalCart.forEach(item => {
       const newId = Math.random().toString(36).substr(2, 9);
       saveToDb('reservations', newId, { 
-        id: newId, name: newReservation.name, referredBy: newReservation.referredBy || null,
+        id: newId, name: newReservation.name.trim(), referredBy: finalReferredBy,
         productId: item.productId, productName: item.productName,
         quantity: item.quantity, cookieUnits: item.cookieUnits, expectedRevenue: item.expectedRevenue,
-        date: newReservation.date, status: 'pending' 
+        date: newReservation.date, status: 'pending', observation: item.observation || ''
       });
     });
 
     setReservationCart([]);
-    setNewReservation({ name: '', referredBy: '', productId: products[0]?.id || '', quantity: 1, date: '' });
+    setNewReservation({ name: '', referredByInput: '', productId: products[0]?.id || '', quantity: 1, date: '', observation: '' });
   };
   
   const handleUpdateReservationStatus = (id, status) => {
@@ -522,7 +543,7 @@ export default function CookieDashboard() {
       saveToDb('reservations', id, { ...r, status });
       if (status === 'completed' && r.status !== 'completed') {
           const newSaleId = Math.random().toString(36).substr(2, 9);
-          saveToDb('sales', newSaleId, { id: newSaleId, date: new Date().toISOString(), quantity: r.quantity, cookieUnits: r.cookieUnits, revenue: r.expectedRevenue, customerName: r.name, productName: r.productName });
+          saveToDb('sales', newSaleId, { id: newSaleId, date: new Date().toISOString(), quantity: r.quantity, cookieUnits: r.cookieUnits, revenue: r.expectedRevenue, customerName: r.name, productName: r.productName, observation: r.observation || '' });
           const existingCustomer = customers.find(c => c.name.toLowerCase() === r.name.toLowerCase().trim());
           if (existingCustomer) saveToDb('customers', existingCustomer.id, { ...existingCustomer, purchases: existingCustomer.purchases + 1 });
           else {
@@ -534,6 +555,44 @@ export default function CookieDashboard() {
   };
 
   const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
+
+  // --- HANDLERS DE EDIÇÃO ---
+  const handleSaveEditCustomer = (e) => {
+    e.preventDefault();
+    if (!editingCustomer || !user) return;
+    saveToDb('customers', editingCustomer.id, {
+      ...editingCustomer,
+      purchases: Number(editingCustomer.purchases)
+    });
+    setEditingCustomer(null);
+  };
+
+  const handleSaveEditReservation = (e) => {
+    e.preventDefault();
+    if (!editingReservation || !user) return;
+    saveToDb('reservations', editingReservation.id, {
+      ...editingReservation,
+      quantity: Number(editingReservation.quantity),
+      expectedRevenue: Number(editingReservation.expectedRevenue),
+      cookieUnits: Number(editingReservation.cookieUnits)
+    });
+    setEditingReservation(null);
+  };
+
+  const handleEditReservationChange = (field, value) => {
+    let updated = { ...editingReservation, [field]: value };
+    // Se mudar o produto ou quantidade, auto-recalcula o lucro e unidades
+    if (field === 'productId' || field === 'quantity') {
+      const p = products.find(prod => prod.id === updated.productId);
+      if (p) {
+         updated.productName = p.name;
+         updated.cookieUnits = (p.units || 1) * Number(updated.quantity || 1);
+         updated.expectedRevenue = p.price * Number(updated.quantity || 1);
+      }
+    }
+    setEditingReservation(updated);
+  };
+
   const handleAddProduct = (e) => {
     e.preventDefault();
     if (!newProduct.name || !newProduct.price || !user) return;
@@ -729,6 +788,12 @@ export default function CookieDashboard() {
 
   return (
     <div className={`${darkMode ? 'dark' : ''} h-full relative`}>
+      
+      {/* DATALIST GLOBAL PARA BUSCA INTELIGENTE DE CLIENTES */}
+      <datalist id="customers-list">
+        {sortedCustomersAlpha.map(c => <option key={c.id} value={c.name} />)}
+      </datalist>
+
       <div className="flex h-[100dvh] bg-orange-50/30 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300 overflow-hidden">
         
         {/* Sidebar */}
@@ -944,6 +1009,7 @@ export default function CookieDashboard() {
                 <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Operação (Vendas & Entregas)</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   
+                  {/* Formulário Rápido de Nova Venda (Carrinho + Observação + Busca Inteligente) */}
                   <div className="lg:col-span-1 bg-amber-600 dark:bg-amber-700 rounded-3xl shadow-sm p-6 text-white relative flex flex-col transition-colors">
                     <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500 dark:bg-amber-600 rounded-full blur-3xl -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
                     
@@ -954,7 +1020,7 @@ export default function CookieDashboard() {
                     <form onSubmit={handleFinalizeQuickSale} className="space-y-4 relative z-10 flex-1 flex flex-col">
                       <div>
                         <label className="block text-xs font-medium text-amber-100 mb-1">Nome do Cliente</label>
-                        <input required type="text" className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Ex: Maria" />
+                        <input list="customers-list" required type="text" className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Escreva ou escolha..." />
                       </div>
                       
                       <div className="flex gap-3">
@@ -970,16 +1036,20 @@ export default function CookieDashboard() {
                         </div>
                         <div className="w-1/2">
                           <label className="block text-xs font-medium text-amber-100 mb-1">Quem indicou? (Opcional)</label>
-                          <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>option]:text-gray-800 transition" value={quickSale.referredBy} onChange={e => setQuickSale({...quickSale, referredBy: e.target.value})}>
-                            <option value="">Ninguém</option>
-                            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
+                          <input 
+                             list="customers-list" 
+                             type="text" 
+                             className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition" 
+                             value={quickSale.referredByInput} 
+                             onChange={e => setQuickSale({...quickSale, referredByInput: e.target.value})} 
+                             placeholder="Busque..." 
+                          />
                         </div>
                       </div>
 
                       <div className="bg-amber-700/30 dark:bg-amber-900/40 p-4 rounded-2xl border border-amber-500/30 dark:border-amber-600/30 mt-2">
                         <label className="block text-xs font-medium text-amber-100 mb-1">Selecionar Item</label>
-                        <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition mb-3" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
+                        <select className="w-full p-2.5 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white [&>optgroup]:text-gray-800 [&>option]:text-gray-800 transition mb-3 text-sm" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
                           {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
                             <>
                               <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {p.price.toFixed(2)}</option>)}</optgroup>
@@ -997,6 +1067,10 @@ export default function CookieDashboard() {
                             <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-gray-800 font-bold text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
                           </div>
                         </div>
+                        <div className="mb-3">
+                          <label className="block text-[10px] uppercase tracking-wider font-bold text-amber-200/80 mb-1">Observações do Pedido</label>
+                          <input type="text" className="w-full p-2 bg-white/10 border border-amber-400/50 dark:border-amber-500/50 rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition text-sm" value={quickSale.observation} onChange={e => setQuickSale({...quickSale, observation: e.target.value})} placeholder="Ex: Sem granulado..." />
+                        </div>
                         <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
                           + Adicionar ao Pedido
                         </button>
@@ -1007,7 +1081,10 @@ export default function CookieDashboard() {
                           <p className="font-bold text-amber-200 mb-2">Itens no Pedido:</p>
                           {quickSaleCart.map((item, i) => (
                             <div key={i} className="flex justify-between items-center text-amber-50 mb-1 pb-1 border-b border-amber-400/20 last:border-0">
-                              <span>{item.quantity}x {item.productName}</span>
+                              <div className="flex flex-col">
+                                <span>{item.quantity}x {item.productName}</span>
+                                {item.observation && <span className="text-[10px] text-amber-200/70 italic">Obs: {item.observation}</span>}
+                              </div>
                               <div className="flex items-center gap-2">
                                 <span>R$ {item.revenue.toFixed(2)}</span>
                                 <button type="button" onClick={() => setQuickSaleCart(quickSaleCart.filter((_, idx) => idx !== i))} className="text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
@@ -1029,24 +1106,31 @@ export default function CookieDashboard() {
 
                   <div className="lg:col-span-2 space-y-6">
                     <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-700 p-6 flex flex-col transition-colors">
-                      <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-4">
-                        <Clock className="text-amber-600 dark:text-amber-500" size={20}/> Entregas Pendentes (Receita: R$ {expectedMetrics.revenue.toFixed(2)})
-                      </h3>
-                      <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-                        {pendingReservationsList.length === 0 ? (
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                          <Clock className="text-amber-600 dark:text-amber-500" size={20}/> Entregas Pendentes
+                        </h3>
+                        <span className="text-sm font-bold text-amber-600 dark:text-amber-500 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-lg">R$ {expectedMetrics.revenue.toFixed(2)}</span>
+                      </div>
+                      
+                      <div className="flex-1 overflow-y-auto space-y-3 pr-2 max-h-[300px]">
+                        {sortedReservations.pending.length === 0 ? (
                           <p className="text-sm text-gray-400 text-center mt-4">Nenhuma encomenda pendente para entregar.</p>
                         ) : (
-                          pendingReservationsList.slice(0, 4).map(res => (
-                            <div key={res.id} className="flex justify-between items-center p-3 bg-amber-50/50 dark:bg-gray-700/50 rounded-xl border border-amber-100/50 dark:border-gray-600 transition-colors">
-                              <div>
-                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200 truncate max-w-[150px]">{res.name}</p>
-                                <p className="text-[10px] text-gray-500 dark:text-gray-400">{res.quantity}x {res.productName}</p>
+                          sortedReservations.pending.map(res => (
+                            <div key={res.id} className="flex flex-col p-3 bg-amber-50/50 dark:bg-gray-700/50 rounded-xl border border-amber-100/50 dark:border-gray-600 transition-colors">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{res.name}</p>
+                                  <p className="text-xs text-gray-600 dark:text-gray-300 font-medium">{res.quantity}x {res.productName}</p>
+                                </div>
+                                <div className="text-right flex flex-col items-end gap-2">
+                                  <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-gray-800 px-2 py-1 rounded-lg border border-transparent dark:border-gray-600">
+                                    {res.date ? new Date(res.date).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short', timeZone: 'UTC'}) : 'A comb.'}
+                                  </span>
+                                </div>
                               </div>
-                              <div className="text-right">
-                                <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-gray-800 px-2 py-1 rounded-lg border border-transparent dark:border-gray-600">
-                                  {res.date ? new Date(res.date).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'}) : 'A comb.'}
-                                </span>
-                              </div>
+                              {res.observation && <p className="text-[10px] text-amber-700/80 dark:text-amber-400/80 italic mt-1 bg-amber-100/50 dark:bg-gray-800/50 p-1.5 rounded">Obs: {res.observation}</p>}
                             </div>
                           ))
                         )}
@@ -1082,6 +1166,7 @@ export default function CookieDashboard() {
                     </div>
                   </div>
 
+                  {/* GRÁFICO DE BARRAS CORRIGIDO COM ALTURA FIXA */}
                   <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-gray-100 dark:border-gray-700 pb-0 relative h-[250px]">
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
                       <div className="border-t border-gray-400 dark:border-gray-300 w-full"></div>
@@ -1094,6 +1179,7 @@ export default function CookieDashboard() {
                       const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
                       return (
                         <div key={index} className="flex flex-col items-center flex-1 group z-10 h-[200px] justify-end">
+                          {/* GRÁFICO DE BARRAS DUPLAS LADO A LADO */}
                           <div className="w-full relative h-[180px] flex items-end justify-center gap-1 sm:gap-2">
                             
                             <div className="w-3 sm:w-5 bg-amber-300 dark:bg-amber-600 rounded-t-sm group-hover:bg-amber-400 dark:group-hover:bg-amber-500 transition-all duration-300" style={{ height: `${revenueHeight}%`, minHeight: data.revenue > 0 ? '8px' : '0' }}></div>
@@ -1482,7 +1568,10 @@ export default function CookieDashboard() {
                           <td className="p-4 text-gray-600 dark:text-gray-400 text-sm">{customer.referrerName}</td>
                           <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>{customer.referralsCount}</span></td>
                           <td className="p-4 text-center font-medium text-amber-700 dark:text-amber-400">{customer.purchases}</td>
-                          <td className="p-4 text-center"><button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button></td>
+                          <td className="p-4 text-center flex items-center justify-center gap-2">
+                             <button onClick={() => setEditingCustomer(customer)} className="p-2 text-amber-500 hover:bg-amber-50 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
+                             <button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-gray-700 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1507,14 +1596,11 @@ export default function CookieDashboard() {
                   <form onSubmit={handleFinalizeReservation} className="space-y-4 flex flex-col flex-1">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nome do Cliente</label>
-                      <input required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.name} onChange={e => setNewReservation({...newReservation, name: e.target.value})} />
+                      <input list="customers-list" required type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.name} onChange={e => setNewReservation({...newReservation, name: e.target.value})} placeholder="Escreva ou escolha..." />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quem indicou? (Opcional)</label>
-                      <select className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.referredBy} onChange={e => setNewReservation({...newReservation, referredBy: e.target.value})}>
-                        <option value="">Ninguém</option>
-                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
+                      <input list="customers-list" type="text" className="w-full p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none transition-colors" value={newReservation.referredByInput} onChange={e => setNewReservation({...newReservation, referredByInput: e.target.value})} placeholder="Busque..." />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data de Entrega (Opcional)</label>
@@ -1538,6 +1624,10 @@ export default function CookieDashboard() {
                          </div>
                          <button type="button" onClick={handleAddToCartReservation} className="bg-amber-500 text-amber-950 px-4 py-2 rounded-lg font-bold text-sm hover:bg-amber-400 transition-colors">+ Adicionar</button>
                       </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 mt-2">Observações</label>
+                        <input type="text" className="w-full p-2 bg-white dark:bg-gray-800 border border-amber-200 dark:border-gray-600 rounded-lg outline-none text-sm" value={newReservation.observation} onChange={e => setNewReservation({...newReservation, observation: e.target.value})} placeholder="Opcional..." />
+                      </div>
                     </div>
 
                     {reservationCart.length > 0 && (
@@ -1545,7 +1635,10 @@ export default function CookieDashboard() {
                         <p className="font-bold text-gray-700 dark:text-gray-300 mb-2">Itens na Encomenda:</p>
                         {reservationCart.map((item, i) => (
                           <div key={i} className="flex justify-between items-center text-gray-600 dark:text-gray-400 mb-1 pb-1 border-b border-gray-200 dark:border-gray-700 last:border-0">
-                            <span>{item.quantity}x {item.productName}</span>
+                            <div className="flex flex-col">
+                               <span>{item.quantity}x {item.productName}</span>
+                               {item.observation && <span className="text-[10px] italic">Obs: {item.observation}</span>}
+                            </div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">R$ {item.expectedRevenue.toFixed(2)}</span>
                               <button type="button" onClick={() => setReservationCart(reservationCart.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-500"><Trash2 size={14}/></button>
@@ -1558,45 +1651,83 @@ export default function CookieDashboard() {
                   </form>
                 </div>
 
-                <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-700 overflow-hidden transition-colors">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-amber-50 dark:bg-gray-900 text-amber-900 dark:text-amber-400 border-b border-amber-100 dark:border-gray-700">
-                          <th className="p-4 font-semibold">Cliente</th>
-                          <th className="p-4 font-semibold">Pedido</th>
-                          <th className="p-4 font-semibold">Data</th>
-                          <th className="p-4 font-semibold text-center">Status</th>
-                          <th className="p-4 font-semibold text-center">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reservations.length === 0 ? (
-                          <tr><td colSpan="5" className="p-8 text-center text-gray-500 dark:text-gray-400">Nenhuma reserva registada.</td></tr>
-                        ) : reservations.map((reservation) => (
-                          <tr key={reservation.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-orange-50/30 dark:hover:bg-gray-700/50 transition-colors">
-                            <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{reservation.name}</td>
-                            <td className="p-4 text-gray-600 dark:text-gray-400 text-sm">{reservation.quantity}x {reservation.productName || reservation.product}</td>
-                            <td className="p-4 text-gray-600 dark:text-gray-400 text-sm">{reservation.date ? new Date(reservation.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : 'A combinar'}</td>
-                            <td className="p-4 text-center">
-                              {reservation.status === 'pending' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400"><Clock size={12}/> Pendente</span>}
-                              {reservation.status === 'completed' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"><CheckCircle size={12}/> Concluída</span>}
-                              {reservation.status === 'cancelled' && <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Cancelado</span>}
-                            </td>
-                            <td className="p-4 text-center flex items-center justify-center gap-2">
-                              {reservation.status === 'pending' && (
-                                <>
-                                  <button onClick={() => handleUpdateReservationStatus(reservation.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Marcar como Concluída (Envia para Vendas)"><CheckCircle size={18}/></button>
-                                  <button onClick={() => handleUpdateReservationStatus(reservation.id, 'cancelled')} className="text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Cancelar"><XCircle size={18}/></button>
-                                </>
-                              )}
-                              <button onClick={() => handleDeleteReservation(reservation.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Excluir"><Trash2 size={18}/></button>
-                            </td>
+                <div className="lg:col-span-2 space-y-6">
+                  {/* SEÇÃO 1: PENDENTES */}
+                  <div className="bg-amber-50/50 dark:bg-gray-800 rounded-2xl shadow-sm border-2 border-amber-200 dark:border-amber-700/50 overflow-hidden transition-colors">
+                    <div className="p-4 border-b border-amber-200 dark:border-amber-700/50 bg-amber-100/50 dark:bg-amber-900/30 flex justify-between items-center">
+                       <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2"><Clock size={18}/> Encomendas Pendentes</h3>
+                       <div className="flex items-center gap-2">
+                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-amber-700 dark:text-amber-500">Filtrar por:</span>
+                         <select className="text-xs bg-transparent outline-none font-bold text-amber-900 dark:text-amber-200 cursor-pointer" value={reservationSortBy} onChange={e => setReservationSortBy(e.target.value)}>
+                           <option value="date-asc">Data ⬆</option>
+                           <option value="date-desc">Data ⬇</option>
+                           <option value="name-asc">Nome (A-Z)</option>
+                         </select>
+                       </div>
+                    </div>
+                    <div className="overflow-x-auto max-h-[400px]">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-white/50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs border-b border-amber-100 dark:border-gray-700">
+                            <th className="p-3 font-semibold">Cliente & Pedido</th>
+                            <th className="p-3 font-semibold text-center">Data</th>
+                            <th className="p-3 font-semibold text-right">Valor</th>
+                            <th className="p-3 font-semibold text-center">Ações</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {sortedReservations.pending.length === 0 ? (
+                            <tr><td colSpan="4" className="p-6 text-center text-sm text-gray-500">Tudo limpo por aqui!</td></tr>
+                          ) : sortedReservations.pending.map((res) => (
+                            <tr key={res.id} className="border-b border-amber-50 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-750 transition-colors">
+                              <td className="p-3">
+                                <p className="font-bold text-sm text-gray-800 dark:text-gray-200">{res.name}</p>
+                                <p className="text-xs text-gray-600 dark:text-gray-400">{res.quantity}x {res.productName}</p>
+                                {res.observation && <p className="text-[10px] text-amber-600 dark:text-amber-400 italic mt-0.5">Obs: {res.observation}</p>}
+                              </td>
+                              <td className="p-3 text-center text-xs font-bold text-amber-700 dark:text-amber-500">{res.date ? new Date(res.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}</td>
+                              <td className="p-3 text-right text-sm font-bold text-gray-700 dark:text-gray-300">R$ {res.expectedRevenue?.toFixed(2)}</td>
+                              <td className="p-3 text-center flex items-center justify-center gap-1 mt-2">
+                                <button onClick={() => handleUpdateReservationStatus(res.id, 'completed')} className="text-green-600 dark:text-green-500 hover:bg-green-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Concluir (Envia Venda)"><CheckCircle size={18}/></button>
+                                <button onClick={() => setEditingReservation(res)} className="text-amber-600 hover:bg-amber-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Editar"><Edit size={16}/></button>
+                                <button onClick={() => handleUpdateReservationStatus(res.id, 'cancelled')} className="text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 p-1.5 rounded transition-colors" title="Cancelar"><XCircle size={18}/></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
+
+                  {/* SEÇÃO 2: HISTÓRICO (Efetivadas/Canceladas) */}
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors opacity-80 hover:opacity-100">
+                    <div className="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                       <h3 className="font-bold text-gray-600 dark:text-gray-400 flex items-center gap-2 text-sm"><History size={16}/> Histórico de Encomendas</h3>
+                    </div>
+                    <div className="overflow-x-auto max-h-[250px]">
+                      <table className="w-full text-left border-collapse">
+                        <tbody>
+                          {sortedReservations.past.length === 0 ? (
+                            <tr><td className="p-4 text-center text-xs text-gray-400">Nenhum histórico.</td></tr>
+                          ) : sortedReservations.past.map((res) => (
+                            <tr key={res.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                              <td className="p-3">
+                                <p className="font-medium text-xs text-gray-700 dark:text-gray-300">{res.name} <span className="text-gray-400">({res.quantity}x {res.productName})</span></p>
+                              </td>
+                              <td className="p-3 text-center">
+                                {res.status === 'completed' ? <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">Concluída</span> : <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Cancelada</span>}
+                              </td>
+                              <td className="p-3 text-right">
+                                <button onClick={() => setEditingReservation(res)} className="text-gray-400 hover:text-amber-500 p-1 rounded" title="Editar Histórico"><Edit size={14}/></button>
+                                <button onClick={() => handleDeleteReservation(res.id)} className="text-gray-400 hover:text-red-500 p-1 rounded" title="Excluir Definitivamente"><Trash2 size={14}/></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
@@ -1733,6 +1864,83 @@ export default function CookieDashboard() {
                </div>
              </button>
           </div>
+
+          {/* MODAL: EDITAR CLIENTE */}
+          {editingCustomer && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-amber-50 dark:bg-gray-900">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><Edit size={18} className="text-amber-600"/> Editar Cliente</h3>
+                  <button onClick={() => setEditingCustomer(null)} className="text-gray-400 hover:text-red-500"><X size={20} /></button>
+                </div>
+                <form onSubmit={handleSaveEditCustomer} className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nome</label>
+                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.name} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Qtd. Compras</label>
+                    <input type="number" min="0" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingCustomer.purchases} onChange={e => setEditingCustomer({...editingCustomer, purchases: e.target.value})} />
+                  </div>
+                  <button type="submit" className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl mt-2 hover:bg-amber-700">Salvar Alterações</button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: EDITAR RESERVA/ENCOMENDA */}
+          {editingReservation && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-amber-50 dark:bg-gray-900">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><Edit size={18} className="text-amber-600"/> Editar Encomenda</h3>
+                  <button onClick={() => setEditingReservation(null)} className="text-gray-400 hover:text-red-500"><X size={20} /></button>
+                </div>
+                <form onSubmit={handleSaveEditReservation} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Cliente</label>
+                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.name} onChange={e => handleEditReservationChange('name', e.target.value)} />
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="w-2/3">
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Produto</label>
+                      <select className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-sm" value={editingReservation.productId} onChange={e => handleEditReservationChange('productId', e.target.value)}>
+                        <option value="avulso">Produto Avulso</option>
+                        {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="w-1/3">
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Qtd</label>
+                      <input type="number" min="1" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-center" value={editingReservation.quantity} onChange={e => handleEditReservationChange('quantity', e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="w-1/2">
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Data Entrega</label>
+                      <input type="date" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.date} onChange={e => handleEditReservationChange('date', e.target.value)} />
+                    </div>
+                    <div className="w-1/2">
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Status</label>
+                      <select className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-sm" value={editingReservation.status} onChange={e => handleEditReservationChange('status', e.target.value)}>
+                        <option value="pending">⏳ Pendente</option>
+                        <option value="completed">✅ Concluída</option>
+                        <option value="cancelled">❌ Cancelada</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Observações</label>
+                    <input type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none" value={editingReservation.observation || ''} onChange={e => handleEditReservationChange('observation', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Valor Cobrado (R$)</label>
+                    <input type="number" step="0.5" required className="w-full p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-lg outline-none font-bold text-amber-700 dark:text-amber-400" value={editingReservation.expectedRevenue} onChange={e => handleEditReservationChange('expectedRevenue', e.target.value)} />
+                  </div>
+                  <button type="submit" className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl mt-2 hover:bg-amber-700 shadow-sm">Salvar Alterações</button>
+                </form>
+              </div>
+            </div>
+          )}
 
         </main>
       </div>
