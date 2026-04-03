@@ -79,6 +79,7 @@ export default function CookieDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
   const [showFooterDetails, setShowFooterDetails] = useState(false);
+  const [publicTab, setPublicTab] = useState('store');
   
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login'); 
@@ -130,7 +131,7 @@ export default function CookieDashboard() {
   const [publicCommunity, setPublicCommunity] = useState({ topReferrers: [], pendingRewards: [] });
   const [storeCart, setStoreCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã', address: '', itemObs: '', acceptedPolicies: false });
+  const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã (Departamentos/Prédios)', address: '', itemObs: '', acceptedPolicies: false });
   const [pubSugData, setPubSugData] = useState({ name: '', text: '', type: 'flavor' });
 
   useEffect(() => {
@@ -631,8 +632,17 @@ export default function CookieDashboard() {
 
   const handleDeleteReservation = (id) => user && deleteFromDb('reservations', id);
 
-  const handleSaveEditCustomer = (e) => {
-    e.preventDefault(); if (!editingCustomer || !user) return;
+  // --- HANDLERS DE EDIÇÃO (COM MAGIA DE MERGE DE CLIENTES) ---
+  const handleSaveEditCustomer = async (e) => {
+    e.preventDefault(); 
+    if (!editingCustomer || !user) return;
+    
+    const oldCustomer = customers.find(c => c.id === editingCustomer.id);
+    if (!oldCustomer) return;
+
+    const newName = editingCustomer.name.trim();
+    const oldName = oldCustomer.name;
+
     let finalReferredBy = editingCustomer.referredBy; 
     if (editingCustomer.referredByInput !== undefined) {
         if (editingCustomer.referredByInput === '') finalReferredBy = null;
@@ -641,7 +651,46 @@ export default function CookieDashboard() {
             if (found) finalReferredBy = found.id;
         }
     }
-    saveToDb('customers', editingCustomer.id, { ...editingCustomer, purchases: Number(editingCustomer.purchases) || 0, referredBy: finalReferredBy });
+
+    // Verifica se já existe outra pessoa com o mesmo nome para fazer o MERGE (Juntar)
+    const existingMatch = customers.find(c => c.id !== editingCustomer.id && (c.name || '').toLowerCase() === newName.toLowerCase());
+
+    if (existingMatch && newName.toLowerCase() !== oldName.toLowerCase()) {
+        // MERGE: Atualiza o existente somando compras
+        await saveToDb('customers', existingMatch.id, {
+            ...existingMatch,
+            purchases: (Number(existingMatch.purchases) || 0) + (Number(editingCustomer.purchases) || 0)
+        });
+        // Apaga o antigo que era duplicado
+        await deleteFromDb('customers', editingCustomer.id);
+
+        // Atualiza todo o histórico de Vendas e Encomendas para apontar para a pessoa certa
+        sales.forEach(s => {
+            if ((s.customerName || '').toLowerCase() === oldName.toLowerCase()) saveToDb('sales', s.id, { ...s, customerName: existingMatch.name });
+        });
+        reservations.forEach(r => {
+            if ((r.name || '').toLowerCase() === oldName.toLowerCase()) saveToDb('reservations', r.id, { ...r, name: existingMatch.name });
+        });
+    } else {
+        // APENAS ATUALIZA O NOME NORMALMENTE
+        await saveToDb('customers', editingCustomer.id, { 
+            ...editingCustomer, 
+            name: newName,
+            purchases: Number(editingCustomer.purchases) || 0, 
+            referredBy: finalReferredBy 
+        });
+
+        // Se o nome mudou, tem de corrigir nas tabelas de vendas e reservas para manter a sincronia
+        if (newName !== oldName) {
+            sales.forEach(s => {
+                if ((s.customerName || '').toLowerCase() === oldName.toLowerCase()) saveToDb('sales', s.id, { ...s, customerName: newName });
+            });
+            reservations.forEach(r => {
+                if ((r.name || '').toLowerCase() === oldName.toLowerCase()) saveToDb('reservations', r.id, { ...r, name: newName });
+            });
+        }
+    }
+
     setEditingCustomer(null);
   };
 
@@ -755,6 +804,7 @@ export default function CookieDashboard() {
   const handleAddSuggestion = (e) => {
     e.preventDefault(); if (!newSuggestion.text || !user) return;
     const normalizedInput = newSuggestion.text.toLowerCase().trim();
+    // Apenas procura no painel para informar o Admin se já há parecido
     const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text || '').toLowerCase().includes(normalizedInput));
     if (matches.length > 0 && !suggestionMatchContext) { setSuggestionMatchContext({ pendingSuggestion: newSuggestion, match: matches[0] }); return; }
     proceedAddSuggestion();
@@ -763,7 +813,7 @@ export default function CookieDashboard() {
   const proceedAddSuggestion = () => {
     const newId = Math.random().toString(36).substr(2, 9);
     const idea = suggestionMatchContext ? suggestionMatchContext.pendingSuggestion : newSuggestion;
-    saveToDb('suggestions', newId, { id: newId, ...idea, votes: 1, isFavorite: false });
+    saveToDb('suggestions', newId, { id: newId, ...idea, votes: 1, isFavorite: false, author: 'Admin' });
     setNewSuggestion({ type: 'flavor', text: '' }); setSuggestionMatchContext(null);
   };
   const acceptSuggestionMatch = () => { handleUpvoteSuggestion(suggestionMatchContext.match.id); setNewSuggestion({ type: 'flavor', text: '' }); setSuggestionMatchContext(null); };
@@ -778,7 +828,7 @@ export default function CookieDashboard() {
         if (existing) saveToDb('suggestions', existing.id, { ...existing, votes: (existing.votes || 0) + 1 });
     } else {
         const newId = Math.random().toString(36).substr(2, 9);
-        saveToDb('suggestions', newId, { id: newId, type: pubSug.type, text: pubSug.text, votes: 1, isFavorite: false });
+        saveToDb('suggestions', newId, { id: newId, type: pubSug.type, text: pubSug.text, votes: 1, isFavorite: false, author: pubSug.name || 'Anónimo' });
     }
     deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_suggestions', pubSug.id));
   };
@@ -872,17 +922,38 @@ export default function CookieDashboard() {
       <div className={`min-h-screen font-sans pb-24 transition-colors duration-300 ${darkMode ? 'dark bg-gray-950 text-gray-100' : 'bg-orange-50 text-gray-800'}`}>
          {/* CABEÇALHO */}
          <header className="bg-amber-900 dark:bg-black text-white p-4 sticky top-0 z-40 shadow-md transition-colors">
-            <div className="max-w-5xl mx-auto flex justify-between items-center">
-               <div className="flex items-center gap-2">
-                 <Cookie size={28} className="text-amber-300" />
-                 <h1 className="text-xl font-bold tracking-tight">Abdookies</h1>
+            <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+               <div className="flex items-center justify-between w-full sm:w-auto">
+                 <div className="flex items-center gap-2">
+                   <Cookie size={28} className="text-amber-300" />
+                   <h1 className="text-xl font-bold tracking-tight">Abdookies</h1>
+                 </div>
+                 
+                 {/* Controles Mobile Visíveis em Cima */}
+                 <div className="flex items-center gap-3 sm:hidden">
+                   <button onClick={() => setDarkMode(!darkMode)} className="text-amber-200 hover:text-white transition-colors p-1">
+                     {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+                   </button>
+                   <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-3 py-1.5 rounded-full transition-colors font-bold text-sm">
+                     <ShoppingCart size={18} />
+                     {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
+                   </button>
+                 </div>
                </div>
-               <div className="flex items-center gap-3">
+
+               {/* Abas de Navegação Pública */}
+               <div className="flex gap-2 sm:gap-4 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide w-full sm:w-auto">
+                  <button onClick={() => setPublicTab('store')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'store' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>🍪 Cardápio</button>
+                  <button onClick={() => setPublicTab('community')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'community' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>🏆 Comunidade & Ideias</button>
+               </div>
+
+               {/* Controles Desktop */}
+               <div className="hidden sm:flex items-center gap-3">
                  <button onClick={() => setDarkMode(!darkMode)} className="text-amber-200 hover:text-white transition-colors p-1">
                    {darkMode ? <Sun size={20} /> : <Moon size={20} />}
                  </button>
                  <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors font-bold text-sm">
-                   <ShoppingCart size={18} /> <span className="hidden sm:inline">Carrinho</span>
+                   <ShoppingCart size={18} /> <span>Carrinho</span>
                    {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
                  </button>
                </div>
@@ -890,7 +961,7 @@ export default function CookieDashboard() {
          </header>
 
          {/* CORPO DA LOJA */}
-         <main className="max-w-5xl mx-auto p-4 mt-6 space-y-10">
+         <main className="max-w-5xl mx-auto p-4 mt-6">
             {!publicSettings.isStoreOpen ? (
                <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm text-center border-2 border-amber-200 dark:border-amber-900 mt-10 transition-colors">
                   <Store size={64} className="text-amber-300 mx-auto mb-4" />
@@ -899,92 +970,98 @@ export default function CookieDashboard() {
                </div>
             ) : (
                <>
-                 {/* CATÁLOGO */}
-                 <section>
-                   <div className="text-center mb-8">
-                      <h2 className="text-3xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies! 🍪</h2>
-                      <p className="text-amber-700 dark:text-amber-400/80 font-medium">Faça a sua reserva abaixo. Entregas exclusivas em Rio Claro/SP.</p>
-                   </div>
+                 {/* ABA 1: CATÁLOGO */}
+                 {publicTab === 'store' && (
+                   <section className="animate-in fade-in duration-300">
+                     <div className="text-center mb-8">
+                        <h2 className="text-3xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies! 🍪</h2>
+                        <p className="text-amber-700 dark:text-amber-400/80 font-medium">Faça a sua reserva abaixo. Entregas exclusivas em Rio Claro/SP.</p>
+                     </div>
 
-                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                      {publicProducts.map(prod => (
-                         <div key={prod.id} className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-800 overflow-hidden flex flex-col hover:shadow-md transition-all">
-                            <div className="h-32 bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-                               {prod.type === 'combo' ? <Layers size={48} className="text-amber-300 dark:text-amber-700/50" /> : <Cookie size={48} className="text-amber-300 dark:text-amber-700/50" />}
-                            </div>
-                            <div className="p-5 flex flex-col flex-1">
-                               <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1">{prod.name}</h3>
-                               {prod.type === 'combo' && <p className="text-xs text-amber-600 dark:text-amber-500 font-medium mb-2">{prod.units} unidades</p>}
-                               <p className="text-xl font-black text-green-600 dark:text-green-500 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
-                               
-                               <div className="mt-auto pt-4 border-t border-gray-100 dark:border-gray-800 space-y-3">
-                                 <input type="text" className="w-full text-xs p-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg outline-none text-gray-800 dark:text-gray-200" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
-                                 <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl transition-colors flex justify-center items-center gap-2">
-                                   <Plus size={16}/> Adicionar
-                                 </button>
+                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                        {publicProducts.map(prod => (
+                           <div key={prod.id} className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-800 overflow-hidden flex flex-col hover:shadow-md transition-all">
+                              <div className="h-32 bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                                 {prod.type === 'combo' ? <Layers size={48} className="text-amber-300 dark:text-amber-700/50" /> : <Cookie size={48} className="text-amber-300 dark:text-amber-700/50" />}
+                              </div>
+                              <div className="p-5 flex flex-col flex-1">
+                                 <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1">{prod.name}</h3>
+                                 {prod.type === 'combo' && <p className="text-xs text-amber-600 dark:text-amber-500 font-medium mb-2">{prod.units} unidades</p>}
+                                 <p className="text-xl font-black text-green-600 dark:text-green-500 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
+                                 
+                                 <div className="mt-auto pt-4 border-t border-gray-100 dark:border-gray-800 space-y-3">
+                                   <input type="text" className="w-full text-xs p-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg outline-none text-gray-800 dark:text-gray-200" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
+                                   <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl transition-colors flex justify-center items-center gap-2">
+                                     <Plus size={16}/> Adicionar
+                                   </button>
+                                 </div>
+                              </div>
+                           </div>
+                        ))}
+                     </div>
+                   </section>
+                 )}
+
+                 {/* ABA 2: COMUNIDADE E IDEIAS */}
+                 {publicTab === 'community' && (
+                   <div className="space-y-10 animate-in fade-in duration-300">
+                     <section className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                        {/* Top Embaixadores */}
+                        <div className="bg-amber-100 dark:bg-amber-900/20 p-6 rounded-3xl border border-amber-200 dark:border-amber-800/50">
+                          <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-4"><Award size={20}/> 🏆 Top Fãs Abdookies</h3>
+                          <p className="text-xs text-amber-800 dark:text-amber-500/80 mb-4">Os nossos maiores parceiros de indicação do mês!</p>
+                          <div className="space-y-3">
+                            {publicCommunity.topReferrers.length === 0 ? <p className="text-sm text-gray-500">O ranking está vazio.</p> : publicCommunity.topReferrers.map((c, i) => (
+                               <div key={i} className="flex items-center gap-3 bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-amber-200/50 dark:border-gray-800">
+                                 <div className="bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-white w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div>
+                                 <span className="font-bold text-gray-800 dark:text-gray-200 flex-1">{c.name}</span>
+                                 <span className="text-xs font-bold text-amber-700 dark:text-amber-500">{c.count} ind.</span>
                                </div>
-                            </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Quadro de Recompensas */}
+                        <div className="bg-green-50 dark:bg-green-900/10 p-6 rounded-3xl border border-green-200 dark:border-green-900/50">
+                          <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2 mb-4"><Gift size={20}/> Resgates Liberados</h3>
+                          <p className="text-xs text-green-800 dark:text-green-500/80 mb-4">Avisem-me para pedir o vosso prémio (válido por 1 semana)!</p>
+                          <div className="space-y-3">
+                            {publicCommunity.pendingRewards.length === 0 ? <p className="text-sm text-gray-500">Nenhum resgate pendente.</p> : publicCommunity.pendingRewards.map((c, i) => (
+                               <div key={i} className="flex flex-col bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-green-200/50 dark:border-gray-800">
+                                 <span className="font-bold text-gray-800 dark:text-gray-200">{c.name}</span>
+                                 <span className="text-xs font-bold text-green-600 dark:text-green-500">➔ Ganhou: {c.count === 2 ? '1 Mini Cookie' : '1 Cookie Tradicional'}</span>
+                               </div>
+                            ))}
+                          </div>
+                        </div>
+                     </section>
+
+                     {/* CAIXA DE SUGESTÕES PÚBLICA */}
+                     <section className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-gray-800 transition-colors">
+                       <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-2"><MessageSquarePlus className="text-amber-500"/> Deixe a sua ideia!</h3>
+                       <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
+                       <form onSubmit={handleSendPublicSuggestion} className="flex flex-col sm:flex-row gap-4 items-end">
+                         <div className="w-full sm:w-48">
+                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seu Nome (Opcional)</label>
+                            <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
                          </div>
-                      ))}
+                         <div className="flex-1 w-full">
+                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
+                            <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache!" />
+                         </div>
+                         <div className="w-full sm:w-40">
+                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Categoria *</label>
+                            <select className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
+                              <option value="flavor">Novo Sabor</option>
+                              <option value="product">Novo Produto</option>
+                              <option value="improvement">Melhoria</option>
+                            </select>
+                         </div>
+                         <button type="submit" className="w-full sm:w-auto bg-amber-600 text-white font-bold py-2.5 px-6 rounded-xl hover:bg-amber-700 transition">Enviar</button>
+                       </form>
+                     </section>
                    </div>
-                 </section>
-
-                 {/* COMUNIDADE E RANKING */}
-                 <section className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6">
-                    {/* Top Embaixadores */}
-                    <div className="bg-amber-100 dark:bg-amber-900/20 p-6 rounded-3xl border border-amber-200 dark:border-amber-800/50">
-                      <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-4"><Award size={20}/> Top Embaixadores</h3>
-                      <p className="text-xs text-amber-800 dark:text-amber-500/80 mb-4">Quem mais indicou a Abdookies e ganhou cookies grátis!</p>
-                      <div className="space-y-3">
-                        {publicCommunity.topReferrers.length === 0 ? <p className="text-sm text-gray-500">O ranking está vazio.</p> : publicCommunity.topReferrers.map((c, i) => (
-                           <div key={i} className="flex items-center gap-3 bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-amber-200/50 dark:border-gray-800">
-                             <div className="bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-white w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div>
-                             <span className="font-bold text-gray-800 dark:text-gray-200 flex-1">{c.name}</span>
-                             <span className="text-xs font-bold text-amber-700 dark:text-amber-500">{c.count} ind.</span>
-                           </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Quadro de Recompensas */}
-                    <div className="bg-green-50 dark:bg-green-900/10 p-6 rounded-3xl border border-green-200 dark:border-green-900/50">
-                      <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2 mb-4"><Gift size={20}/> Resgates Liberados</h3>
-                      <p className="text-xs text-green-800 dark:text-green-500/80 mb-4">Embaixadores que atingiram a meta e podem pedir o seu mimo hoje!</p>
-                      <div className="space-y-3">
-                        {publicCommunity.pendingRewards.length === 0 ? <p className="text-sm text-gray-500">Nenhum resgate pendente.</p> : publicCommunity.pendingRewards.map((c, i) => (
-                           <div key={i} className="flex flex-col bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-green-200/50 dark:border-gray-800">
-                             <span className="font-bold text-gray-800 dark:text-gray-200">{c.name}</span>
-                             <span className="text-xs font-bold text-green-600 dark:text-green-500">➔ Ganhou: {c.count === 2 ? '1 Mini Cookie' : '1 Cookie Tradicional'}</span>
-                           </div>
-                        ))}
-                      </div>
-                    </div>
-                 </section>
-
-                 {/* CAIXA DE SUGESTÕES PÚBLICA */}
-                 <section className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-gray-800 transition-colors mt-8">
-                   <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-2"><MessageSquarePlus className="text-amber-500"/> Deixe a sua ideia!</h3>
-                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
-                   <form onSubmit={handleSendPublicSuggestion} className="flex flex-col sm:flex-row gap-4 items-end">
-                     <div className="w-full sm:w-48">
-                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seu Nome (Opcional)</label>
-                        <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
-                     </div>
-                     <div className="flex-1 w-full">
-                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
-                        <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache!" />
-                     </div>
-                     <div className="w-full sm:w-40">
-                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Categoria *</label>
-                        <select className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
-                          <option value="flavor">Novo Sabor</option>
-                          <option value="product">Novo Produto</option>
-                          <option value="improvement">Melhoria</option>
-                        </select>
-                     </div>
-                     <button type="submit" className="w-full sm:w-auto bg-amber-600 text-white font-bold py-2.5 px-6 rounded-xl hover:bg-amber-700 transition">Enviar</button>
-                   </form>
-                 </section>
+                 )}
                </>
             )}
          </main>
@@ -1083,7 +1160,7 @@ export default function CookieDashboard() {
                                  <p className="text-xs font-bold text-red-900 dark:text-red-400">Políticas e Avisos Importantes</p>
                                  <ul className="text-[10px] text-red-800 dark:text-red-300 list-disc pl-4 mt-1 space-y-0.5">
                                    <li>Entregas <b>apenas</b> na UNESP, Bela Vista e Vila Alemã.</li>
-                                   <li>Os pedidos são feitos <b>sob demanda</b> e sujeitos à disponibilidade do nosso stock diário.</li>
+                                   <li>Os pedidos são feitos <b>sob demanda</b> e sujeitos à disponibilidade do nosso estoque diário.</li>
                                    <li>A confirmação final será feita sempre pelo nosso WhatsApp.</li>
                                  </ul>
                                </div>
@@ -1496,7 +1573,7 @@ export default function CookieDashboard() {
                     <div className="bg-green-50/50 dark:bg-gray-800 rounded-2xl shadow-sm border-2 border-green-200 dark:border-green-700/50 overflow-hidden transition-colors">
                       <div className="p-4 border-b border-green-200 dark:border-green-700/50 bg-green-100/50 dark:bg-green-900/30 flex justify-between items-center">
                          <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2"><ShoppingCart size={18}/> 🛒 Pedidos da Loja Online</h3>
-                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-green-700 dark:text-green-500">{onlineOrders.length} aguardando</span>
+                         <span className="text-xs font-bold bg-white dark:bg-gray-900 px-2 py-1 rounded-md text-green-700 dark:text-green-500">{onlineOrders.length} aguardando aprovação</span>
                       </div>
                       <div className="overflow-x-auto max-h-[300px]">
                         <table className="w-full text-left border-collapse">
@@ -2442,7 +2519,10 @@ export default function CookieDashboard() {
                       {suggestions.filter(s => s.type === catType).sort((a,b) => (b.isFavorite ? 1 : 0) - (a.isFavorite ? 1 : 0) || (b.votes || 0) - (a.votes || 0)).map(s => (
                         <div key={s.id} className={`bg-white dark:bg-gray-900 p-3 rounded-lg shadow-sm border ${s.isFavorite ? 'border-amber-400 dark:border-amber-500 ring-1 ring-amber-400 dark:ring-amber-500' : 'border-gray-100 dark:border-gray-700'} flex flex-col gap-2 transition-all`}>
                           <div className="flex justify-between items-start gap-2">
-                            <span className="text-gray-700 dark:text-gray-200 text-sm flex-1">{s.text}</span>
+                            <div className="flex-1">
+                              <span className="text-gray-700 dark:text-gray-200 text-sm">{s.text}</span>
+                              <span className="text-[10px] text-gray-400 dark:text-gray-500 block mt-1">Sugerido por: {s.author || 'Admin'}</span>
+                            </div>
                             <button onClick={() => handleToggleFavorite(s.id)} className={`${s.isFavorite ? 'text-amber-400 dark:text-amber-500' : 'text-gray-300 dark:text-gray-600 hover:text-amber-300 dark:hover:text-amber-500'} transition-colors`}><Star size={18} fill={s.isFavorite ? 'currentColor' : 'none'} /></button>
                           </div>
                           <div className="flex justify-between items-center mt-1 border-t border-gray-50 dark:border-gray-800 pt-2">
@@ -2516,6 +2596,11 @@ export default function CookieDashboard() {
                   <button onClick={() => setEditingCustomer(null)} className="text-gray-400 hover:text-red-500"><X size={20} /></button>
                 </div>
                 <form onSubmit={handleSaveEditCustomer} className="p-6 space-y-4">
+                  <div className="bg-amber-50/50 dark:bg-gray-900/50 border border-amber-200/50 dark:border-gray-700 p-3 rounded-xl mb-4">
+                     <p className="text-[10px] text-amber-800 dark:text-amber-400 font-medium leading-tight">
+                       💡 <b>Aviso:</b> Se alterar o nome para um cliente que já existe, os dois serão <b>unidos num só</b> e as compras serão somadas automaticamente! Ideal para corrigir erros de digitação.
+                     </p>
+                  </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nome</label>
                     <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.name} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
