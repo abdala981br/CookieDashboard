@@ -31,6 +31,7 @@ const appId = 'cookie-dash-app';
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
+  // Força Long Polling para contornar bloqueios de navegadores (Opera/Brave)
   db = initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch (e) { console.error("Erro ao iniciar Firebase:", e); }
 
@@ -131,6 +132,7 @@ export default function CookieDashboard() {
   const [publicCommunity, setPublicCommunity] = useState({ topReferrers: [], pendingRewards: [] });
   const [storeCart, setStoreCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [showCartToast, setShowCartToast] = useState(false);
   const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã (Departamentos/Prédios)', address: '', itemObs: '', acceptedPolicies: false });
   const [pubSugData, setPubSugData] = useState({ name: '', text: '', type: 'flavor' });
 
@@ -846,6 +848,10 @@ export default function CookieDashboard() {
        return [...prev, { productId: product.id, name: product.name, price: product.price, units: product.units || 1, qty: 1, obs: checkoutData.itemObs || '' }];
     });
     setCheckoutData(prev => ({...prev, itemObs: ''}));
+    
+    // Mostra o aviso de carrinho
+    setShowCartToast(true);
+    setTimeout(() => setShowCartToast(false), 2000);
   };
 
   const handleCheckoutPublic = async (e) => {
@@ -931,31 +937,51 @@ export default function CookieDashboard() {
                  
                  {/* Controles Mobile Visíveis em Cima */}
                  <div className="flex items-center gap-3 sm:hidden">
+                   <button onClick={() => { if(user && !user.isAnonymous) setAppMode('dashboard'); else setAppMode('admin_login'); }} className="text-[10px] font-bold text-amber-200 hover:text-white border border-amber-700 px-2 py-1 rounded">
+                     {user && !user.isAnonymous ? 'Painel' : 'Login'}
+                   </button>
                    <button onClick={() => setDarkMode(!darkMode)} className="text-amber-200 hover:text-white transition-colors p-1">
                      {darkMode ? <Sun size={20} /> : <Moon size={20} />}
                    </button>
-                   <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-3 py-1.5 rounded-full transition-colors font-bold text-sm">
-                     <ShoppingCart size={18} />
-                     {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
-                   </button>
+                   <div className="relative">
+                     <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-3 py-1.5 rounded-full transition-colors font-bold text-sm">
+                       <ShoppingCart size={18} />
+                       {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
+                     </button>
+                     {showCartToast && (
+                        <div className="absolute top-full mt-2 right-0 bg-green-500 text-white text-xs px-2 py-1 rounded shadow-lg animate-bounce whitespace-nowrap z-50">
+                          Adicionado!
+                        </div>
+                     )}
+                   </div>
                  </div>
                </div>
 
                {/* Abas de Navegação Pública */}
                <div className="flex gap-2 sm:gap-4 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide w-full sm:w-auto">
-                  <button onClick={() => setPublicTab('store')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'store' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>🍪 Cardápio</button>
-                  <button onClick={() => setPublicTab('community')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'community' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>🏆 Comunidade & Ideias</button>
+                  <button onClick={() => setPublicTab('store')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'store' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Cardápio</button>
+                  <button onClick={() => setPublicTab('community')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'community' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Mural</button>
                </div>
 
                {/* Controles Desktop */}
                <div className="hidden sm:flex items-center gap-3">
+                 <button onClick={() => { if(user && !user.isAnonymous) setAppMode('dashboard'); else setAppMode('admin_login'); }} className="text-xs font-bold text-amber-200 hover:text-white transition-colors border border-amber-700 px-3 py-1.5 rounded-lg">
+                   {user && !user.isAnonymous ? 'Painel Admin' : 'Login'}
+                 </button>
                  <button onClick={() => setDarkMode(!darkMode)} className="text-amber-200 hover:text-white transition-colors p-1">
                    {darkMode ? <Sun size={20} /> : <Moon size={20} />}
                  </button>
-                 <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors font-bold text-sm">
-                   <ShoppingCart size={18} /> <span>Carrinho</span>
-                   {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
-                 </button>
+                 <div className="relative">
+                   <button onClick={() => setIsCartOpen(true)} className="relative flex items-center gap-2 bg-amber-800 dark:bg-amber-900 hover:bg-amber-700 px-4 py-2 rounded-full transition-colors font-bold text-sm">
+                     <ShoppingCart size={18} /> <span>Carrinho</span>
+                     {storeCart.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-amber-900">{storeCart.reduce((a,b)=>a+b.qty,0)}</span>}
+                   </button>
+                   {showCartToast && (
+                      <div className="absolute top-full mt-2 right-0 bg-green-500 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg animate-bounce whitespace-nowrap z-50 flex items-center gap-1">
+                        <CheckCircle size={12}/> Adicionado!
+                      </div>
+                   )}
+                 </div>
                </div>
             </div>
          </header>
@@ -974,7 +1000,7 @@ export default function CookieDashboard() {
                  {publicTab === 'store' && (
                    <section className="animate-in fade-in duration-300">
                      <div className="text-center mb-8">
-                        <h2 className="text-3xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies! 🍪</h2>
+                        <h2 className="text-3xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies!</h2>
                         <p className="text-amber-700 dark:text-amber-400/80 font-medium">Faça a sua reserva abaixo. Entregas exclusivas em Rio Claro/SP.</p>
                      </div>
 
@@ -1008,7 +1034,7 @@ export default function CookieDashboard() {
                      <section className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
                         {/* Top Embaixadores */}
                         <div className="bg-amber-100 dark:bg-amber-900/20 p-6 rounded-3xl border border-amber-200 dark:border-amber-800/50">
-                          <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-4"><Award size={20}/> 🏆 Top Fãs Abdookies</h3>
+                          <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-4"><Award size={20}/> Top Fãs Abdookies</h3>
                           <p className="text-xs text-amber-800 dark:text-amber-500/80 mb-4">Os nossos maiores parceiros de indicação do mês!</p>
                           <div className="space-y-3">
                             {publicCommunity.topReferrers.length === 0 ? <p className="text-sm text-gray-500">O ranking está vazio.</p> : publicCommunity.topReferrers.map((c, i) => (
@@ -1065,13 +1091,6 @@ export default function CookieDashboard() {
                </>
             )}
          </main>
-
-         {/* RODAPÉ E ADMIN LINK */}
-         <div className="text-center mt-12 mb-8">
-            <button onClick={() => { if(user && !user.isAnonymous) setAppMode('dashboard'); else setAppMode('admin_login'); }} className="text-xs font-bold text-amber-600 dark:text-gray-500 hover:text-amber-800 transition-colors bg-amber-100 dark:bg-transparent px-4 py-2 rounded-full">
-              {user && !user.isAnonymous ? 'Voltar ao Abdookies Dash' : 'Acesso Restrito (Admin)'}
-            </button>
-         </div>
 
          {/* MODAL DO CARRINHO */}
          {isCartOpen && (
@@ -2125,16 +2144,15 @@ export default function CookieDashboard() {
                     <div>
                       <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Seu WhatsApp (Receber Pedidos)</label>
                       <div className="relative">
-                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 font-bold">+55</span>
                         <input 
                           type="text" 
-                          className="w-full pl-11 pr-3 py-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm text-gray-800 dark:text-gray-200"
+                          className="w-full p-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm text-gray-800 dark:text-gray-200"
                           value={storeSettings.whatsappNumber}
-                          onChange={e => setStoreSettings({...storeSettings, whatsappNumber: e.target.value.replace(/\D/g, '')})}
-                          placeholder="Ex: 11999999999"
+                          onChange={e => setStoreSettings({...storeSettings, whatsappNumber: e.target.value.replace(/[^\d+]/g, '')})}
+                          placeholder="Ex: +5511999999999"
                         />
                       </div>
-                      <p className="text-[10px] text-gray-500 mt-1">Apenas números com DDD.</p>
+                      <p className="text-[10px] text-gray-500 mt-1">Inclua o código do país (+55) e DDD.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Antecedência Máxima (Dias)</label>
