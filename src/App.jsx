@@ -129,10 +129,11 @@ export default function CookieDashboard() {
   // ESTADOS PÚBLICOS
   const [publicProducts, setPublicProducts] = useState([]);
   const [publicSettings, setPublicSettings] = useState({ isStoreOpen: false, closedMessage: 'Carregando Loja...', maxAdvanceDays: 14, whatsappNumber: '' });
-  const [publicCommunity, setPublicCommunity] = useState({ topReferrers: [], pendingRewards: [] });
+  const [publicCommunity, setPublicCommunity] = useState({ latestSuggestions: [] });
   const [storeCart, setStoreCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [showCartToast, setShowCartToast] = useState(false);
+  const [showMuralPopup, setShowMuralPopup] = useState(false);
   const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã (Departamentos/Prédios)', address: '', itemObs: '', acceptedPolicies: false });
   const [pubSugData, setPubSugData] = useState({ name: '', text: '', type: 'flavor' });
 
@@ -226,13 +227,19 @@ export default function CookieDashboard() {
   useEffect(() => { 
     if (db && user && !user.isAnonymous && isConfigLoaded) { 
       saveConfig({ recipeConfig, goals, sheetUrl, storeSettings }); 
+      
+      const recentSug = [...suggestions].reverse().slice(0, 3).map(s => ({
+          text: s.text,
+          author: s.author || 'Anônimo',
+          type: s.type
+      }));
+
       setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'store', 'info'), { 
           products, storeSettings,
-          topReferrers: topReferrers.map(c => ({ name: c.name, count: c.referralsCount })).filter(c => c.count > 0),
-          pendingRewards: pendingRewards.map(c => ({ name: c.name, count: c.referralsCount }))
+          latestSuggestions: recentSug
       });
     }
-  }, [recipeConfig, goals, sheetUrl, storeSettings, products, topReferrers, pendingRewards, user, isConfigLoaded]);
+  }, [recipeConfig, goals, sheetUrl, storeSettings, products, suggestions, user, isConfigLoaded]);
 
   useEffect(() => {
     if (db && user && (appMode === 'storefront' || appMode === 'dashboard')) {
@@ -241,12 +248,20 @@ export default function CookieDashboard() {
             const d = snap.data();
             setPublicProducts((d.products || []).filter(p => p.isVisible !== false));
             setPublicSettings(d.storeSettings || { isStoreOpen: false, closedMessage: 'Carregando Loja...', maxAdvanceDays: 14, whatsappNumber: '' });
-            setPublicCommunity({ topReferrers: d.topReferrers || [], pendingRewards: d.pendingRewards || [] });
+            setPublicCommunity({ latestSuggestions: d.latestSuggestions || [] });
          }
       });
       return () => unsub();
     }
   }, [user, appMode]);
+
+  useEffect(() => {
+    if (publicTab === 'community') {
+       setShowMuralPopup(true);
+       const timer = setTimeout(() => setShowMuralPopup(false), 5000);
+       return () => clearTimeout(timer);
+    }
+  }, [publicTab]);
 
   useEffect(() => {
     if (!quickSale.productId && products.length > 0) {
@@ -1030,62 +1045,70 @@ export default function CookieDashboard() {
 
                  {/* ABA 2: COMUNIDADE E IDEIAS */}
                  {publicTab === 'community' && (
-                   <div className="space-y-10 animate-in fade-in duration-300">
-                     <section className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-                        {/* Top Embaixadores */}
-                        <div className="bg-amber-100 dark:bg-amber-900/20 p-6 rounded-3xl border border-amber-200 dark:border-amber-800/50">
-                          <h3 className="font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-4"><Award size={20}/> Top Fãs Abdookies</h3>
-                          <p className="text-xs text-amber-800 dark:text-amber-500/80 mb-4">Os nossos maiores parceiros de indicação do mês!</p>
-                          <div className="space-y-3">
-                            {publicCommunity.topReferrers.length === 0 ? <p className="text-sm text-gray-500">O ranking está vazio.</p> : publicCommunity.topReferrers.map((c, i) => (
-                               <div key={i} className="flex items-center gap-3 bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-amber-200/50 dark:border-gray-800">
-                                 <div className="bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-white w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div>
-                                 <span className="font-bold text-gray-800 dark:text-gray-200 flex-1">{c.name}</span>
-                                 <span className="text-xs font-bold text-amber-700 dark:text-amber-500">{c.count} ind.</span>
-                               </div>
-                            ))}
-                          </div>
+                   <div className="relative space-y-10 animate-in fade-in duration-300">
+                     {/* POPUP DO MURAL */}
+                     {showMuralPopup && (
+                        <div className="absolute -top-2 left-1/2 transform -translate-x-1/2 z-50 bg-amber-600 text-white px-6 py-3 rounded-full shadow-2xl animate-in slide-in-from-top-4 fade-out duration-500 flex items-center gap-2 w-max">
+                           <Lightbulb size={18} className="animate-pulse" />
+                           <span className="font-bold text-sm">Bem-vindo ao Mural! Deixe a sua ideia. ✨</span>
                         </div>
+                     )}
 
-                        {/* Quadro de Recompensas */}
-                        <div className="bg-green-50 dark:bg-green-900/10 p-6 rounded-3xl border border-green-200 dark:border-green-900/50">
-                          <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2 mb-4"><Gift size={20}/> Resgates Liberados</h3>
-                          <p className="text-xs text-green-800 dark:text-green-500/80 mb-4">Avisem-me para pedir o vosso prémio (válido por 1 semana)!</p>
-                          <div className="space-y-3">
-                            {publicCommunity.pendingRewards.length === 0 ? <p className="text-sm text-gray-500">Nenhum resgate pendente.</p> : publicCommunity.pendingRewards.map((c, i) => (
-                               <div key={i} className="flex flex-col bg-white/60 dark:bg-gray-900/50 p-3 rounded-xl border border-green-200/50 dark:border-gray-800">
-                                 <span className="font-bold text-gray-800 dark:text-gray-200">{c.name}</span>
-                                 <span className="text-xs font-bold text-green-600 dark:text-green-500">➔ Ganhou: {c.count === 2 ? '1 Mini Cookie' : '1 Cookie Tradicional'}</span>
+                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-8">
+                        {/* CAIXA DE SUGESTÕES PÚBLICA */}
+                        <section className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-gray-800 transition-colors h-fit">
+                           <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-2"><MessageSquarePlus className="text-amber-500"/> Deixe a sua ideia!</h3>
+                           <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
+                           <form onSubmit={handleSendPublicSuggestion} className="flex flex-col gap-4">
+                             <div>
+                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seu Nome (Opcional)</label>
+                                <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
+                             </div>
+                             <div>
+                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
+                                <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache!" />
+                             </div>
+                             <div className="flex flex-col sm:flex-row gap-4">
+                               <div className="flex-1">
+                                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Categoria *</label>
+                                  <select className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
+                                    <option value="flavor">Novo Sabor</option>
+                                    <option value="product">Novo Produto</option>
+                                    <option value="improvement">Melhoria</option>
+                                  </select>
                                </div>
-                            ))}
-                          </div>
-                        </div>
-                     </section>
+                               <button type="submit" className="w-full sm:w-auto bg-amber-600 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-amber-700 transition mt-auto h-[42px]">Enviar</button>
+                             </div>
+                           </form>
+                        </section>
 
-                     {/* CAIXA DE SUGESTÕES PÚBLICA */}
-                     <section className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-gray-800 transition-colors">
-                       <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-2"><MessageSquarePlus className="text-amber-500"/> Deixe a sua ideia!</h3>
-                       <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
-                       <form onSubmit={handleSendPublicSuggestion} className="flex flex-col sm:flex-row gap-4 items-end">
-                         <div className="w-full sm:w-48">
-                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seu Nome (Opcional)</label>
-                            <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
-                         </div>
-                         <div className="flex-1 w-full">
-                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
-                            <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache!" />
-                         </div>
-                         <div className="w-full sm:w-40">
-                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Categoria *</label>
-                            <select className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
-                              <option value="flavor">Novo Sabor</option>
-                              <option value="product">Novo Produto</option>
-                              <option value="improvement">Melhoria</option>
-                            </select>
-                         </div>
-                         <button type="submit" className="w-full sm:w-auto bg-amber-600 text-white font-bold py-2.5 px-6 rounded-xl hover:bg-amber-700 transition">Enviar</button>
-                       </form>
-                     </section>
+                        {/* ÚLTIMAS IDEIAS */}
+                        <section className="bg-amber-50/50 dark:bg-gray-800/50 p-6 sm:p-8 rounded-3xl border border-amber-200/50 dark:border-gray-700 flex flex-col h-full">
+                           <h3 className="text-lg font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-6"><Lightbulb size={20}/> Últimas Ideias da Comunidade</h3>
+                           <div className="space-y-4 flex-1">
+                              {publicCommunity.latestSuggestions.length === 0 ? (
+                                 <div className="flex flex-col items-center justify-center h-full text-center opacity-60 pb-8">
+                                   <Lightbulb size={40} className="text-amber-400 mb-2" />
+                                   <p className="text-sm font-medium text-amber-900 dark:text-amber-100">Seja o primeiro a deixar uma ideia!</p>
+                                 </div>
+                              ) : (
+                                 publicCommunity.latestSuggestions.map((sug, i) => (
+                                    <div key={i} className="bg-white dark:bg-gray-900 p-4 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-800 relative overflow-hidden">
+                                       <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
+                                       <div className="flex items-center gap-2 mb-2">
+                                          {sug.type === 'flavor' ? <Cookie size={14} className="text-amber-500"/> : sug.type === 'product' ? <Package size={14} className="text-amber-500"/> : <Lightbulb size={14} className="text-amber-500"/>}
+                                          <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                            {sug.type === 'flavor' ? 'Novo Sabor' : sug.type === 'product' ? 'Novo Produto' : 'Melhoria'}
+                                          </span>
+                                       </div>
+                                       <p className="text-gray-800 dark:text-gray-200 font-medium text-sm mb-2 leading-relaxed">"{sug.text}"</p>
+                                       <p className="text-[10px] text-gray-400 dark:text-gray-500 text-right font-bold">— {sug.author}</p>
+                                    </div>
+                                 ))
+                              )}
+                           </div>
+                        </section>
+                     </div>
                    </div>
                  )}
                </>
