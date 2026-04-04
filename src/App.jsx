@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 // IMPORTAÇÕES DO FIREBASE
 import { initializeApp } from 'firebase/app';
@@ -12,7 +13,7 @@ import {
   Package, BarChart3, Activity, PieChart, ShoppingCart, Award, History,
   X, ChevronDown, ChevronRight, ShoppingBag, Tag, Layers, Calendar,
   AlertCircle, Moon, Sun, LogOut, Lock, Mail, Zap, Trophy, Target, 
-  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit, Store, Send, Eye, EyeOff, MessageSquarePlus, ShieldAlert
+  TrendingDown, Gift, Crosshair, Flame, UsersRound, LineChart, ClipboardList, AlertTriangle, Info, Edit, Store, Send, Eye, EyeOff, MessageSquarePlus, ShieldAlert, Share2, CalendarDays, MapPin
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
@@ -80,7 +81,7 @@ export default function CookieDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
   const [showFooterDetails, setShowFooterDetails] = useState(false);
-  const [publicTab, setPublicTab] = useState('store');
+  const [publicTab, setPublicTab] = useState('store'); // Pode ser 'store' ou 'events'
   
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login'); 
@@ -133,7 +134,6 @@ export default function CookieDashboard() {
   const [storeCart, setStoreCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [showCartToast, setShowCartToast] = useState(false);
-  const [showMuralPopup, setShowMuralPopup] = useState(false);
   const [checkoutData, setCheckoutData] = useState({ name: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã (Departamentos/Prédios)', address: '', itemObs: '', acceptedPolicies: false });
   const [pubSugData, setPubSugData] = useState({ name: '', text: '', type: 'flavor' });
 
@@ -254,14 +254,6 @@ export default function CookieDashboard() {
       return () => unsub();
     }
   }, [user, appMode]);
-
-  useEffect(() => {
-    if (publicTab === 'community') {
-       setShowMuralPopup(true);
-       const timer = setTimeout(() => setShowMuralPopup(false), 5000);
-       return () => clearTimeout(timer);
-    }
-  }, [publicTab]);
 
   useEffect(() => {
     if (!quickSale.productId && products.length > 0) {
@@ -940,7 +932,7 @@ export default function CookieDashboard() {
   // ==========================================
   if (appMode === 'storefront') {
     return (
-      <div className={`min-h-screen font-sans pb-24 transition-colors duration-300 ${darkMode ? 'dark bg-gray-950 text-gray-100' : 'bg-orange-50 text-gray-800'}`}>
+      <div className={`min-h-screen font-sans pb-24 transition-colors duration-300 ${darkMode ? 'dark bg-gray-950 text-gray-100' : 'bg-orange-50 text-amber-950'}`}>
          {/* CABEÇALHO */}
          <header className="bg-amber-900 dark:bg-black text-white p-4 sticky top-0 z-40 shadow-md transition-colors">
             <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
@@ -974,8 +966,8 @@ export default function CookieDashboard() {
 
                {/* Abas de Navegação Pública */}
                <div className="flex gap-2 sm:gap-4 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide w-full sm:w-auto">
-                  <button onClick={() => setPublicTab('store')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'store' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Cardápio</button>
-                  <button onClick={() => setPublicTab('community')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto ${publicTab === 'community' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Mural</button>
+                  <button onClick={() => setPublicTab('store')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto flex items-center justify-center gap-2 ${publicTab === 'store' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}><Store size={16}/> Cardápio</button>
+                  <button onClick={() => setPublicTab('events')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto flex items-center justify-center gap-2 ${publicTab === 'events' ? 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-white' : 'text-amber-200 hover:bg-amber-800 dark:text-gray-400 dark:hover:bg-gray-800'}`}><CalendarDays size={16}/> Próximas Fornadas</button>
                </div>
 
                {/* Controles Desktop */}
@@ -1002,7 +994,44 @@ export default function CookieDashboard() {
          </header>
 
          {/* CORPO DA LOJA */}
-         <main className="max-w-5xl mx-auto p-4 mt-6">
+         <main className="max-w-5xl mx-auto p-4 mt-6 text-center">
+            {/* TÍTULO PRINCIPAL */}
+            <h2 className="text-3xl sm:text-4xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies!</h2>
+            <p className="text-amber-700 dark:text-amber-400/80 font-medium mb-8">Faça a sua reserva abaixo.</p>
+
+            {/* SESSÃO: INDIQUE E GANHE BANNER */}
+            <section className="bg-white dark:bg-gray-900 border border-amber-100 dark:border-gray-800 rounded-3xl p-6 mb-8 shadow-sm relative overflow-hidden text-left animate-in fade-in slide-in-from-top-4">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 dark:bg-gray-800 rounded-full -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
+
+              <div className="flex items-center gap-3 mb-6 relative z-10">
+                <div className="bg-amber-100 dark:bg-amber-900/40 p-2 rounded-xl text-amber-600 dark:text-amber-400">
+                  <Gift size={24} />
+                </div>
+                <h2 className="text-2xl font-bold text-amber-950 dark:text-gray-100">Indique e Ganhe!</h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+                <div className="flex flex-col items-center text-center p-5 rounded-2xl bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
+                  <div className="w-10 h-10 bg-white dark:bg-gray-700 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center font-black text-lg mb-3 shadow-sm border border-amber-100 dark:border-gray-600">1</div>
+                  <Share2 size={28} className="text-amber-500 mb-2" />
+                  <h3 className="font-bold text-amber-950 dark:text-gray-200 mb-1">Compartilhe</h3>
+                  <p className="text-sm text-amber-800/70 dark:text-gray-400">Fale dos nossos cookies e envie o link para os seus amigos e familiares.</p>
+                </div>
+                <div className="flex flex-col items-center text-center p-5 rounded-2xl bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
+                  <div className="w-10 h-10 bg-white dark:bg-gray-700 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center font-black text-lg mb-3 shadow-sm border border-amber-100 dark:border-gray-600">2</div>
+                  <Users size={28} className="text-amber-500 mb-2" />
+                  <h3 className="font-bold text-amber-950 dark:text-gray-200 mb-1">Eles Compram</h3>
+                  <p className="text-sm text-amber-800/70 dark:text-gray-400">Ao finalizarem um pedido, eles colocam o seu nome na indicação.</p>
+                </div>
+                <div className="flex flex-col items-center text-center p-5 rounded-2xl bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
+                  <div className="w-10 h-10 bg-white dark:bg-gray-700 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center font-black text-lg mb-3 shadow-sm border border-amber-100 dark:border-gray-600">3</div>
+                  <Cookie size={28} className="text-amber-500 mb-2" />
+                  <h3 className="font-bold text-amber-950 dark:text-gray-200 mb-1">Você Ganha</h3>
+                  <p className="text-sm text-amber-800/70 dark:text-gray-400">Você acumula indicações e ganha cookies de presente na próxima compra!</p>
+                </div>
+              </div>
+            </section>
+
             {!publicSettings.isStoreOpen ? (
                <div className="bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm text-center border-2 border-amber-200 dark:border-amber-900 mt-10 transition-colors">
                   <Store size={64} className="text-amber-300 mx-auto mb-4" />
@@ -1013,27 +1042,22 @@ export default function CookieDashboard() {
                <>
                  {/* ABA 1: CATÁLOGO */}
                  {publicTab === 'store' && (
-                   <section className="animate-in fade-in duration-300">
-                     <div className="text-center mb-8">
-                        <h2 className="text-3xl font-black text-amber-900 dark:text-amber-500 mb-2">Peça seus Cookies!</h2>
-                        <p className="text-amber-700 dark:text-amber-400/80 font-medium">Faça a sua reserva abaixo. Entregas exclusivas em Rio Claro/SP.</p>
-                     </div>
-
+                   <section className="animate-in fade-in duration-300 text-left">
                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
                         {publicProducts.map(prod => (
                            <div key={prod.id} className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100 dark:border-gray-800 overflow-hidden flex flex-col hover:shadow-md transition-all">
-                              <div className="h-32 bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                              <div className="h-36 bg-amber-50/50 dark:bg-amber-900/30 flex items-center justify-center border-b border-amber-50 dark:border-gray-800">
                                  {prod.type === 'combo' ? <Layers size={48} className="text-amber-300 dark:text-amber-700/50" /> : <Cookie size={48} className="text-amber-300 dark:text-amber-700/50" />}
                               </div>
                               <div className="p-5 flex flex-col flex-1">
-                                 <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 mb-1">{prod.name}</h3>
+                                 <h3 className="font-bold text-lg text-amber-950 dark:text-gray-100 mb-1 leading-tight">{prod.name}</h3>
                                  {prod.type === 'combo' && <p className="text-xs text-amber-600 dark:text-amber-500 font-medium mb-2">{prod.units} unidades</p>}
                                  <p className="text-xl font-black text-green-600 dark:text-green-500 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
                                  
-                                 <div className="mt-auto pt-4 border-t border-gray-100 dark:border-gray-800 space-y-3">
-                                   <input type="text" className="w-full text-xs p-2 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg outline-none text-gray-800 dark:text-gray-200" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
-                                   <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl transition-colors flex justify-center items-center gap-2">
-                                     <Plus size={16}/> Adicionar
+                                 <div className="mt-auto pt-4 border-t border-amber-50 dark:border-gray-800 space-y-3">
+                                   <input type="text" className="w-full text-xs p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-200 dark:border-gray-800 rounded-xl outline-none focus:border-amber-400 text-amber-950 dark:text-gray-200 placeholder-amber-700/40 dark:placeholder-gray-600 transition-colors" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
+                                   <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-sm">
+                                     <Plus size={18}/> Adicionar
                                    </button>
                                  </div>
                               </div>
@@ -1043,73 +1067,55 @@ export default function CookieDashboard() {
                    </section>
                  )}
 
-                 {/* ABA 2: COMUNIDADE E IDEIAS */}
-                 {publicTab === 'community' && (
-                   <div className="relative space-y-10 animate-in fade-in duration-300">
-                     {/* POPUP DO MURAL */}
-                     {showMuralPopup && (
-                        <div className="absolute -top-2 left-1/2 transform -translate-x-1/2 z-50 bg-amber-600 text-white px-6 py-3 rounded-full shadow-2xl animate-in slide-in-from-top-4 fade-out duration-500 flex items-center gap-2 w-max">
-                           <Lightbulb size={18} className="animate-pulse" />
-                           <span className="font-bold text-sm">Bem-vindo ao Mural! Deixe a sua ideia. ✨</span>
-                        </div>
-                     )}
-
-                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-8">
-                        {/* CAIXA DE SUGESTÕES PÚBLICA */}
-                        <section className="bg-white dark:bg-gray-900 p-6 sm:p-8 rounded-3xl shadow-sm border border-gray-200 dark:border-gray-800 transition-colors h-fit">
-                           <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2 mb-2"><MessageSquarePlus className="text-amber-500"/> Deixe a sua ideia!</h3>
-                           <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
-                           <form onSubmit={handleSendPublicSuggestion} className="flex flex-col gap-4">
-                             <div>
-                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seu Nome (Opcional)</label>
-                                <input type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
-                             </div>
-                             <div>
-                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
-                                <input required type="text" className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache!" />
-                             </div>
-                             <div className="flex flex-col sm:flex-row gap-4">
-                               <div className="flex-1">
-                                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Categoria *</label>
-                                  <select className="w-full p-2.5 bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl outline-none text-sm text-gray-800 dark:text-gray-200" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
-                                    <option value="flavor">Novo Sabor</option>
-                                    <option value="product">Novo Produto</option>
-                                    <option value="improvement">Melhoria</option>
-                                  </select>
-                               </div>
-                               <button type="submit" className="w-full sm:w-auto bg-amber-600 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-amber-700 transition mt-auto h-[42px]">Enviar</button>
-                             </div>
-                           </form>
-                        </section>
-
-                        {/* ÚLTIMAS IDEIAS */}
-                        <section className="bg-amber-50/50 dark:bg-gray-800/50 p-6 sm:p-8 rounded-3xl border border-amber-200/50 dark:border-gray-700 flex flex-col h-full">
-                           <h3 className="text-lg font-bold text-amber-900 dark:text-amber-400 flex items-center gap-2 mb-6"><Lightbulb size={20}/> Últimas Ideias da Comunidade</h3>
-                           <div className="space-y-4 flex-1">
-                              {publicCommunity.latestSuggestions.length === 0 ? (
-                                 <div className="flex flex-col items-center justify-center h-full text-center opacity-60 pb-8">
-                                   <Lightbulb size={40} className="text-amber-400 mb-2" />
-                                   <p className="text-sm font-medium text-amber-900 dark:text-amber-100">Seja o primeiro a deixar uma ideia!</p>
-                                 </div>
-                              ) : (
-                                 publicCommunity.latestSuggestions.map((sug, i) => (
-                                    <div key={i} className="bg-white dark:bg-gray-900 p-4 rounded-2xl shadow-sm border border-amber-100 dark:border-gray-800 relative overflow-hidden">
-                                       <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
-                                       <div className="flex items-center gap-2 mb-2">
-                                          {sug.type === 'flavor' ? <Cookie size={14} className="text-amber-500"/> : sug.type === 'product' ? <Package size={14} className="text-amber-500"/> : <Lightbulb size={14} className="text-amber-500"/>}
-                                          <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                            {sug.type === 'flavor' ? 'Novo Sabor' : sug.type === 'product' ? 'Novo Produto' : 'Melhoria'}
-                                          </span>
-                                       </div>
-                                       <p className="text-gray-800 dark:text-gray-200 font-medium text-sm mb-2 leading-relaxed">"{sug.text}"</p>
-                                       <p className="text-[10px] text-gray-400 dark:text-gray-500 text-right font-bold">— {sug.author}</p>
-                                    </div>
-                                 ))
-                              )}
+                 {/* ABA 2: EVENTOS / PRÓXIMAS FORNADAS */}
+                 {publicTab === 'events' && (
+                   <section className="animate-in fade-in duration-300">
+                     <div className="bg-white dark:bg-gray-900 border border-amber-100 dark:border-gray-800 rounded-3xl p-8 shadow-sm text-center">
+                       <div className="w-20 h-20 bg-amber-50 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6 text-amber-500">
+                         <CalendarDays size={40} />
+                       </div>
+                       <h2 className="text-3xl font-bold text-amber-950 dark:text-gray-100 mb-4">Fique de olho!</h2>
+                       <p className="text-amber-800/80 dark:text-gray-400 text-lg max-w-2xl mx-auto mb-8">
+                         Aqui você encontrará as datas das nossas próximas fornadas especiais, feiras gastronômicas e edições limitadas.
+                       </p>
+                       
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto text-left">
+                         {/* Evento 1 */}
+                         <div className="bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-100/50 dark:border-gray-700 p-5 rounded-2xl flex gap-4 hover:shadow-sm transition-shadow">
+                           <div className="bg-amber-100 dark:bg-gray-700 text-amber-700 dark:text-amber-400 font-bold p-3 rounded-xl text-center h-fit min-w-[70px]">
+                             <span className="block text-2xl leading-none mb-1">15</span>
+                             <span className="block text-xs uppercase">Maio</span>
                            </div>
-                        </section>
+                           <div>
+                             <h4 className="font-bold text-lg text-amber-950 dark:text-gray-200 mb-1">Feira Gastronômica da Praça</h4>
+                             <p className="text-sm text-amber-800/70 dark:text-gray-400 flex items-center gap-1 mb-1">
+                               <MapPin size={14} /> Praça Central
+                             </p>
+                             <p className="text-sm text-amber-800/70 dark:text-gray-400 flex items-center gap-1">
+                               <Clock size={14} /> 10h às 18h
+                             </p>
+                           </div>
+                         </div>
+
+                         {/* Evento 2 */}
+                         <div className="bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-100/50 dark:border-gray-700 p-5 rounded-2xl flex gap-4 hover:shadow-sm transition-shadow">
+                           <div className="bg-amber-100 dark:bg-gray-700 text-amber-700 dark:text-amber-400 font-bold p-3 rounded-xl text-center h-fit min-w-[70px]">
+                             <span className="block text-2xl leading-none mb-1">22</span>
+                             <span className="block text-xs uppercase">Maio</span>
+                           </div>
+                           <div>
+                             <h4 className="font-bold text-lg text-amber-950 dark:text-gray-200 mb-1">Fornada: Red Velvet</h4>
+                             <p className="text-sm text-amber-800/70 dark:text-gray-400 flex items-center gap-1 mb-1">
+                               <Cookie size={14} /> Edição Limitada
+                             </p>
+                             <p className="text-sm text-amber-800/70 dark:text-gray-400 flex items-center gap-1">
+                               <Clock size={14} /> Apenas Delivery
+                             </p>
+                           </div>
+                         </div>
+                       </div>
                      </div>
-                   </div>
+                   </section>
                  )}
                </>
             )}
