@@ -31,7 +31,6 @@ const appId = 'cookie-dash-app';
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  // Força Long Polling para contornar bloqueios de navegadores (Opera/Brave)
   db = initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch (e) { console.error("Erro ao iniciar Firebase:", e); }
 
@@ -74,14 +73,13 @@ const NetworkNode = ({ customer, customers, isRoot = false }) => {
   );
 };
 
-
 export default function CookieDashboard() {
   const [appMode, setAppMode] = useState('loading'); 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [darkMode, setDarkMode] = useState(false);
   const [showFooterDetails, setShowFooterDetails] = useState(false);
   const [publicTab, setPublicTab] = useState('store'); 
-  const [publicFormType, setPublicFormType] = useState('idea'); // 'idea' | 'feedback'
+  const [publicFormType, setPublicFormType] = useState('idea'); 
   
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('login'); 
@@ -90,7 +88,6 @@ export default function CookieDashboard() {
   const [authError, setAuthError] = useState('');
   const [resetMessage, setResetMessage] = useState('');
 
-  // ESTADOS ADMIN
   const [customers, setCustomers] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -127,7 +124,6 @@ export default function CookieDashboard() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showSalesHistory, setShowSalesHistory] = useState(false);
 
-  // ESTADOS PÚBLICOS
   const [publicProducts, setPublicProducts] = useState([]);
   const [publicSettings, setPublicSettings] = useState({ isStoreOpen: false, closedMessage: 'Carregando Loja...', maxAdvanceDays: 14, whatsappNumber: '' });
   const [publicCommunity, setPublicCommunity] = useState({ latestSuggestions: [] });
@@ -136,7 +132,6 @@ export default function CookieDashboard() {
   const [showCartToast, setShowCartToast] = useState(false);
   const [showMuralPopup, setShowMuralPopup] = useState(false);
   
-  // Checkout & Community states
   const [checkoutData, setCheckoutData] = useState({ name: '', phone: '', referredBy: '', date: getTodayYMD(), deliveryType: 'unesp', period: 'Manhã (Departamentos/Prédios)', address: '', itemObs: '', acceptedPolicies: false });
   const [pubSugData, setPubSugData] = useState({ name: '', text: '', type: 'flavor' });
   const [pubFeedbackData, setPubFeedbackData] = useState({ name: '', product: '', text: '', allowRepublish: false });
@@ -825,7 +820,6 @@ export default function CookieDashboard() {
   const handleAddSuggestion = (e) => {
     e.preventDefault(); if (!newSuggestion.text || !user) return;
     const normalizedInput = newSuggestion.text.toLowerCase().trim();
-    // Apenas procura no painel para informar o Admin se já há parecido
     const matches = suggestions.filter(s => s.type === newSuggestion.type && (s.text || '').toLowerCase().includes(normalizedInput));
     if (matches.length > 0 && !suggestionMatchContext) { setSuggestionMatchContext({ pendingSuggestion: newSuggestion, match: matches[0] }); return; }
     proceedAddSuggestion();
@@ -842,7 +836,6 @@ export default function CookieDashboard() {
   const handleToggleFavorite = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, isFavorite: !s.isFavorite }); };
   const handleUpvoteSuggestion = (id) => { const s = suggestions.find(x => x.id === id); if(s && user) saveToDb('suggestions', id, { ...s, votes: (s.votes || 0) + 1 }); };
 
-  // Ações do Admin para Sugestões do Público
   const handleApprovePublicSuggestion = (pubSug, isMerge, targetId = null) => {
     if (isMerge && targetId) {
         const existing = suggestions.find(s => s.id === targetId);
@@ -868,7 +861,6 @@ export default function CookieDashboard() {
     });
     setCheckoutData(prev => ({...prev, itemObs: ''}));
     
-    // Mostra o aviso de carrinho
     setShowCartToast(true);
     setTimeout(() => setShowCartToast(false), 2000);
   };
@@ -934,7 +926,6 @@ export default function CookieDashboard() {
     if (!pubFeedbackData.text || !pubFeedbackData.product || !pubFeedbackData.name) return;
     const id = Math.random().toString(36).substr(2, 9);
     try {
-      // Salvando também na coleção online_suggestions mas com o type 'feedback' para o admin ver
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'online_suggestions', id), { 
         name: pubFeedbackData.name, 
         text: `[FEEDBACK - ${pubFeedbackData.product}]: ${pubFeedbackData.text}${pubFeedbackData.allowRepublish ? ' (Autorizou republicação)' : ''}`, 
@@ -951,7 +942,7 @@ export default function CookieDashboard() {
   // ==========================================
   if (appMode === 'loading') {
     return (
-      <div className="min-h-screen bg-[#FDF4E3] dark:bg-gray-900 flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen bg-[#FFFBF4] dark:bg-gray-900 flex flex-col items-center justify-center p-4">
         <Cookie className="text-[#F58220] animate-spin mb-4" size={48} />
         <p className="text-[#8A6A4B] dark:text-amber-400 font-medium">A carregar o seu mundo doce...</p>
       </div>
@@ -963,9 +954,9 @@ export default function CookieDashboard() {
   // ==========================================
   if (appMode === 'storefront') {
     return (
-      <div className={`min-h-screen font-sans pb-24 transition-colors duration-300 ${darkMode ? 'dark bg-gray-950 text-gray-100' : 'bg-[#FDF4E3] text-[#4A3219]'}`}>
+      <div className={`min-h-screen font-sans pb-24 transition-colors duration-300 ${darkMode ? 'dark bg-gray-950 text-gray-100' : 'bg-[#FFFBF4] text-[#4A3219]'}`}>
          {/* CABEÇALHO */}
-         <header className="bg-[#F58220] dark:bg-gray-950 text-white p-4 sticky top-0 z-40 shadow-md transition-colors border-b border-amber-600 dark:border-gray-800">
+         <header className="bg-[#F58220] dark:bg-gray-950 text-white p-4 sticky top-0 z-40 shadow-sm transition-colors border-b border-amber-600 dark:border-gray-800">
             <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                <div className="flex items-center justify-between w-full sm:w-auto">
                  <div className="flex items-center gap-2">
@@ -995,10 +986,10 @@ export default function CookieDashboard() {
                  </div>
                </div>
 
-               {/* Abas de Navegação Pública (SEM ÍCONES) */}
+               {/* Abas de Navegação Pública */}
                <div className="flex gap-2 sm:gap-4 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide w-full sm:w-auto">
-                  <button onClick={() => setPublicTab('store')} className={`font-bold px-5 py-2.5 rounded-full whitespace-nowrap transition-all flex-1 sm:flex-auto flex items-center justify-center gap-2 ${publicTab === 'store' ? 'bg-white text-[#F58220] dark:bg-gray-800 dark:text-white shadow-md' : 'text-amber-100 hover:bg-white/20 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Cardápio</button>
-                  <button onClick={() => setPublicTab('community')} className={`font-bold px-5 py-2.5 rounded-full whitespace-nowrap transition-all flex-1 sm:flex-auto flex items-center justify-center gap-2 ${publicTab === 'community' ? 'bg-white text-[#F58220] dark:bg-gray-800 dark:text-white shadow-md' : 'text-amber-100 hover:bg-white/20 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Mural</button>
+                  <button onClick={() => setPublicTab('store')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto flex items-center justify-center gap-2 ${publicTab === 'store' ? 'bg-white text-[#F58220] dark:bg-gray-800 dark:text-white shadow-sm' : 'text-amber-100 hover:bg-white/20 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Cardápio</button>
+                  <button onClick={() => setPublicTab('community')} className={`font-bold px-4 py-2 rounded-full whitespace-nowrap transition-colors flex-1 sm:flex-auto flex items-center justify-center gap-2 ${publicTab === 'community' ? 'bg-white text-[#F58220] dark:bg-gray-800 dark:text-white shadow-sm' : 'text-amber-100 hover:bg-white/20 dark:text-gray-400 dark:hover:bg-gray-800'}`}>Mural</button>
                </div>
 
                {/* Controles Desktop */}
@@ -1045,17 +1036,14 @@ export default function CookieDashboard() {
 
                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
                         {publicProducts.map(prod => (
-                           <div key={prod.id} className="bg-white dark:bg-gray-900 rounded-3xl shadow-md border border-amber-100/50 dark:border-gray-800 overflow-hidden flex flex-col hover:shadow-lg transition-all">
-                              <div className="h-36 bg-[#FDF4E3] dark:bg-gray-800/50 flex items-center justify-center border-b border-amber-50 dark:border-gray-800">
-                                 {prod.type === 'combo' ? <Layers size={48} className="text-[#F58220] dark:text-amber-600/50" /> : <Cookie size={48} className="text-[#F58220] dark:text-amber-600/50" />}
-                              </div>
+                           <div key={prod.id} className="bg-white dark:bg-gray-900 rounded-3xl shadow-sm border border-amber-100/50 dark:border-gray-800 overflow-hidden flex flex-col hover:shadow-lg transition-all">
                               <div className="p-5 flex flex-col flex-1">
                                  <h3 className="font-bold text-lg text-[#4A3219] dark:text-gray-100 mb-1 leading-tight">{prod.name}</h3>
                                  {prod.type === 'combo' && <p className="text-xs text-[#D67118] dark:text-amber-500 font-medium mb-2">{prod.units} unidades</p>}
                                  <p className="text-xl font-black text-[#22A042] dark:text-green-500 mb-4 mt-auto">R$ {(Number(prod.price)||0).toFixed(2)}</p>
                                  
                                  <div className="mt-auto pt-4 border-t border-amber-50 dark:border-gray-800 space-y-3">
-                                   <input type="text" className="w-full text-xs p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none focus:border-[#F58220] text-[#4A3219] dark:text-gray-200 placeholder-[#A6937A] dark:placeholder-gray-600 transition-colors" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
+                                   <input type="text" className="w-full text-xs p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none focus:border-[#F58220] text-[#4A3219] dark:text-gray-200 placeholder-[#A6937A] dark:placeholder-gray-600 transition-colors" placeholder="Observações (ex: sem granulado)" value={checkoutData.itemObs} onChange={e => setCheckoutData({...checkoutData, itemObs: e.target.value})} />
                                    <button onClick={() => handleAddToCartPublic(prod)} className="w-full bg-[#F58220] hover:bg-[#E0731A] dark:bg-amber-600 dark:hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-sm">
                                      <Plus size={18}/> Adicionar
                                    </button>
@@ -1065,9 +1053,7 @@ export default function CookieDashboard() {
                         ))}
                      </div>
                      
-                     {/* NOVIDADES A CAMINHO */}
                      <div className="mt-16 mb-8 text-center opacity-80">
-                        <Cookie size={32} className="mx-auto text-[#D67118] mb-3 opacity-50" />
                         <p className="text-xl font-black text-[#D67118] dark:text-amber-500 mb-1">Aguarde...</p>
                         <p className="text-sm font-medium text-[#8A6A4B] dark:text-gray-400">Mais novidades deliciosas estão a caminho da nossa cozinha! ✨</p>
                      </div>
@@ -1087,26 +1073,20 @@ export default function CookieDashboard() {
                        <div className="absolute top-0 right-0 w-32 h-32 bg-[#FDF4E3] dark:bg-gray-800 rounded-full -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
 
                        <div className="flex items-center gap-3 mb-6 relative z-10">
-                         <div className="bg-[#FDF4E3] dark:bg-amber-900/40 p-2 rounded-xl text-[#F58220] dark:text-amber-400">
-                           <Gift size={24} />
-                         </div>
                          <h2 className="text-2xl font-bold text-[#4A3219] dark:text-gray-100">Indique e Ganhe!</h2>
                        </div>
 
                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
-                         <div className="flex flex-col items-center text-center p-5 rounded-2xl bg-[#FDF4E3] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
-                           <div className="w-10 h-10 bg-white dark:bg-gray-700 text-[#F58220] dark:text-amber-400 rounded-full flex items-center justify-center font-black text-lg mb-3 shadow-sm border border-amber-100 dark:border-gray-600">1</div>
-                           <h3 className="font-bold text-[#4A3219] dark:text-gray-200 mb-1">Compartilhe</h3>
+                         <div className="flex flex-col text-left p-5 rounded-2xl bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
+                           <h3 className="font-bold text-[#4A3219] dark:text-gray-200 mb-1">1. Compartilhe</h3>
                            <p className="text-sm text-[#8A6A4B] dark:text-gray-400">Comente com os amigos que estamos vendendo! Pode mandar o nosso link ou falar no boca a boca.</p>
                          </div>
-                         <div className="flex flex-col items-center text-center p-5 rounded-2xl bg-[#FDF4E3] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
-                           <div className="w-10 h-10 bg-white dark:bg-gray-700 text-[#F58220] dark:text-amber-400 rounded-full flex items-center justify-center font-black text-lg mb-3 shadow-sm border border-amber-100 dark:border-gray-600">2</div>
-                           <h3 className="font-bold text-[#4A3219] dark:text-gray-200 mb-1">Seus Amigos Pedem</h3>
+                         <div className="flex flex-col text-left p-5 rounded-2xl bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
+                           <h3 className="font-bold text-[#4A3219] dark:text-gray-200 mb-1">2. Seus Amigos Pedem</h3>
                            <p className="text-sm text-[#8A6A4B] dark:text-gray-400">Quando eles fizerem o pedido, só precisam colocar o seu nome na indicação.</p>
                          </div>
-                         <div className="flex flex-col items-center text-center p-5 rounded-2xl bg-[#FDF4E3] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
-                           <div className="w-10 h-10 bg-white dark:bg-gray-700 text-[#F58220] dark:text-amber-400 rounded-full flex items-center justify-center font-black text-lg mb-3 shadow-sm border border-amber-100 dark:border-gray-600">3</div>
-                           <h3 className="font-bold text-[#4A3219] dark:text-gray-200 mb-1">Você Ganha!</h3>
+                         <div className="flex flex-col text-left p-5 rounded-2xl bg-[#FFFBF4] dark:bg-gray-800/50 border border-amber-50 dark:border-gray-700/50 hover:shadow-sm transition-shadow">
+                           <h3 className="font-bold text-[#4A3219] dark:text-gray-200 mb-1">3. Você Ganha!</h3>
                            <p className="text-sm text-[#8A6A4B] dark:text-gray-400"><strong>2 indicações</strong> = 1 Mini Cookie.<br/><strong>5 indicações</strong> = 1 Cookie Tradicional!</p>
                          </div>
                        </div>
@@ -1117,7 +1097,7 @@ export default function CookieDashboard() {
                         <h3 className="text-2xl font-bold text-[#4A3219] dark:text-gray-100 mb-6 text-center">Deixe a sua marca!</h3>
                         
                         {/* TABS PARA O FORM */}
-                        <div className="flex gap-2 p-1 bg-[#FDF4E3] dark:bg-gray-800 rounded-xl mb-6">
+                        <div className="flex gap-2 p-1 bg-[#FFFBF4] dark:bg-gray-800 rounded-xl mb-6">
                           <button onClick={() => setPublicFormType('idea')} className={`flex-1 py-2 font-bold text-sm rounded-lg transition-all ${publicFormType === 'idea' ? 'bg-white shadow-sm text-[#F58220]' : 'text-[#8A6A4B] hover:bg-white/50'}`}>Nova Ideia</button>
                           <button onClick={() => setPublicFormType('feedback')} className={`flex-1 py-2 font-bold text-sm rounded-lg transition-all ${publicFormType === 'feedback' ? 'bg-white shadow-sm text-[#F58220]' : 'text-[#8A6A4B] hover:bg-white/50'}`}>Dar Feedback</button>
                         </div>
@@ -1127,16 +1107,16 @@ export default function CookieDashboard() {
                              <p className="text-sm text-[#8A6A4B] dark:text-gray-400 mb-2">Quer um sabor novo? Tem uma sugestão? A sua opinião molda o nosso cardápio!</p>
                              <div>
                                 <label className="block text-xs font-bold text-[#8A6A4B] dark:text-gray-400 uppercase mb-1">Seu Nome *</label>
-                                <input required type="text" className="w-full p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
+                                <input required type="text" className="w-full p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubSugData.name} onChange={e => setPubSugData({...pubSugData, name: e.target.value})} placeholder="Como se chama?" />
                              </div>
                              <div>
                                 <label className="block text-xs font-bold text-[#8A6A4B] dark:text-gray-400 uppercase mb-1">Sua Ideia *</label>
-                                <input required type="text" className="w-full p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache com Framboesa!" />
+                                <input required type="text" className="w-full p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubSugData.text} onChange={e => setPubSugData({...pubSugData, text: e.target.value})} placeholder="Ex: Cookie de Pistache com Framboesa!" />
                              </div>
                              <div className="flex flex-col sm:flex-row gap-4">
                                <div className="flex-1">
                                   <label className="block text-xs font-bold text-[#8A6A4B] dark:text-gray-400 uppercase mb-1">Categoria *</label>
-                                  <select className="w-full p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
+                                  <select className="w-full p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubSugData.type} onChange={e => setPubSugData({...pubSugData, type: e.target.value})}>
                                     <option value="flavor">Novo Sabor</option>
                                     <option value="product">Novo Produto</option>
                                     <option value="improvement">Melhoria na Loja</option>
@@ -1151,16 +1131,16 @@ export default function CookieDashboard() {
                              <div className="flex flex-col sm:flex-row gap-4">
                                <div className="flex-1">
                                   <label className="block text-xs font-bold text-[#8A6A4B] dark:text-gray-400 uppercase mb-1">Seu Nome *</label>
-                                  <input required type="text" className="w-full p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubFeedbackData.name} onChange={e => setPubFeedbackData({...pubFeedbackData, name: e.target.value})} placeholder="Seu nome" />
+                                  <input required type="text" className="w-full p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubFeedbackData.name} onChange={e => setPubFeedbackData({...pubFeedbackData, name: e.target.value})} placeholder="Seu nome" />
                                </div>
                                <div className="flex-1">
                                   <label className="block text-xs font-bold text-[#8A6A4B] dark:text-gray-400 uppercase mb-1">Produto *</label>
-                                  <input required type="text" className="w-full p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubFeedbackData.product} onChange={e => setPubFeedbackData({...pubFeedbackData, product: e.target.value})} placeholder="Ex: Cookie Tradicional" />
+                                  <input required type="text" className="w-full p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220]" value={pubFeedbackData.product} onChange={e => setPubFeedbackData({...pubFeedbackData, product: e.target.value})} placeholder="Ex: Cookie Tradicional" />
                                </div>
                              </div>
                              <div className="flex-1">
                                 <label className="block text-xs font-bold text-[#8A6A4B] dark:text-gray-400 uppercase mb-1">Seu Feedback *</label>
-                                <textarea required className="w-full p-3 bg-[#FDF4E3] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220] min-h-[100px] resize-none" value={pubFeedbackData.text} onChange={e => setPubFeedbackData({...pubFeedbackData, text: e.target.value})} placeholder="Estava incrível! A textura da massa era..." />
+                                <textarea required className="w-full p-3 bg-[#FFFBF4] dark:bg-gray-950 border border-amber-100 dark:border-gray-800 rounded-xl outline-none text-sm text-[#4A3219] dark:text-gray-200 focus:border-[#F58220] min-h-[100px] resize-none" value={pubFeedbackData.text} onChange={e => setPubFeedbackData({...pubFeedbackData, text: e.target.value})} placeholder="Estava incrível! A textura da massa era..." />
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between mt-2">
                                 <label className="flex items-center gap-2 cursor-pointer">
@@ -1182,7 +1162,7 @@ export default function CookieDashboard() {
          {isCartOpen && (
             <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex justify-end">
                <div className="bg-white dark:bg-gray-950 w-full max-w-md h-full shadow-2xl flex flex-col animate-in slide-in-from-right-8 duration-300">
-                  <div className="p-4 border-b border-amber-100 dark:border-gray-800 flex justify-between items-center bg-[#FDF4E3] dark:bg-black">
+                  <div className="p-4 border-b border-amber-100 dark:border-gray-800 flex justify-between items-center bg-[#FFFBF4] dark:bg-black">
                     <h3 className="font-bold text-[#4A3219] dark:text-gray-100 flex items-center gap-2"><ShoppingCart size={20} className="text-[#F58220] dark:text-amber-500"/> Seu Pedido</h3>
                     <button onClick={() => setIsCartOpen(false)} className="text-[#8A6A4B] hover:text-[#4A3219] dark:hover:text-white p-2 bg-white dark:bg-gray-900 rounded-full shadow-sm"><X size={20} /></button>
                   </div>
@@ -1192,7 +1172,7 @@ export default function CookieDashboard() {
                         <p className="text-center text-[#8A6A4B] dark:text-gray-400 mt-10 font-medium">Seu carrinho está vazio.</p>
                      ) : (
                         storeCart.map((item, i) => (
-                           <div key={i} className="bg-[#FDF4E3] dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-amber-50 dark:border-gray-700 flex justify-between items-center transition-colors">
+                           <div key={i} className="bg-[#FFFBF4] dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-amber-50 dark:border-gray-700 flex justify-between items-center transition-colors">
                               <div>
                                  <p className="font-bold text-[#4A3219] dark:text-gray-200 text-sm mb-1">{item.name}</p>
                                  <p className="text-xs font-black text-[#22A042] dark:text-green-400">R$ {(item.price * item.qty).toFixed(2)}</p>
@@ -1211,7 +1191,7 @@ export default function CookieDashboard() {
                      )}
 
                      {storeCart.length > 0 && (
-                        <form id="checkout-form" onSubmit={handleCheckoutPublic} className="bg-[#FDF4E3] dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-amber-900/50 mt-6 space-y-4">
+                        <form id="checkout-form" onSubmit={handleCheckoutPublic} className="bg-[#FFFBF4] dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-amber-900/50 mt-6 space-y-4">
                            <h4 className="font-bold text-[#4A3219] dark:text-amber-500 border-b border-amber-100 dark:border-gray-700 pb-2 mb-4">Dados da Entrega</h4>
                            
                            <div>
@@ -2651,8 +2631,84 @@ export default function CookieDashboard() {
           <div className="fixed bottom-20 md:bottom-8 left-1/2 transform -translate-x-1/2 z-40 flex flex-col items-center">
              {showFooterDetails && (
                <div className="mb-2 bg-gray-800 dark:bg-gray-900 border border-gray-700 shadow-2xl rounded-2xl p-5 text-sm text-gray-200 w-80 animate-in fade-in slide-in-from-bottom-2">
-                 <div className="flex items-center gap-2>
-                 {/* MODAL: EDITAR RESERVA/ENCOMENDA */}
+                 <div className="flex items-center gap-2 font-bold text-white mb-3 border-b border-gray-700 pb-2">
+                   <Info size={16} className="text-amber-400" /> Resumo Financeiro
+                 </div>
+                 <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-400">Receita Total <span className="text-[10px] block">Todas as Vendas</span></span>
+                    <span className="text-green-400 font-bold">R$ {(Number(globalMetrics.totalRevenue)||0).toFixed(2)}</span>
+                 </div>
+                 <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-400">Custo Histórico <span className="text-[10px] block">Ficha Técnica ({(Number(globalMetrics.totalCookiesSold)||0)} un.)</span></span>
+                    <span className="text-red-400 font-bold">-R$ {(Number(globalMetrics.totalEstimatedCost)||0).toFixed(2)}</span>
+                 </div>
+                 <div className="flex justify-between mt-2 pt-2 border-t border-gray-700 mb-3">
+                    <span className="font-bold text-white">Lucro Real (Histórico)</span>
+                    <span className="text-amber-400 font-black text-lg">R$ {(Number(globalMetrics.totalEstimatedProfit)||0).toFixed(2)}</span>
+                 </div>
+                 <div className="bg-gray-900 rounded-xl p-3 border border-gray-700">
+                    <span className="text-gray-400 text-xs block mb-1">Custo para bater +1 receita hoje (Mercado):</span>
+                    <span className="text-red-400 font-bold block text-right">R$ {(Number(missingCostForOneBatch)||0).toFixed(2)}</span>
+                 </div>
+               </div>
+             )}
+
+             <button 
+               onMouseEnter={() => setShowFooterDetails(true)}
+               onMouseLeave={() => setShowFooterDetails(false)}
+               onClick={() => setShowFooterDetails(!showFooterDetails)}
+               className="bg-gray-900 dark:bg-black/90 backdrop-blur-md border border-gray-700/50 shadow-[0_10px_40px_rgba(0,0,0,0.3)] hover:border-amber-500/50 rounded-2xl px-6 py-3 flex items-center justify-between gap-4 md:gap-8 text-white w-[90vw] max-w-lg md:w-auto whitespace-nowrap overflow-x-auto transition-all cursor-help"
+             >
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Faturamento</span>
+                 <span className="font-black text-green-400">R$ {(Number(globalMetrics.totalRevenue)||0).toFixed(2)}</span>
+               </div>
+               <div className="h-6 w-px bg-gray-700/50"></div>
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Custo Reposição</span>
+                 <span className="font-black text-red-400">-R$ {(Number(missingCostForOneBatch)||0).toFixed(2)}</span>
+               </div>
+               <div className="h-6 w-px bg-gray-700/50"></div>
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Lucro Líquido</span>
+                 <span className="font-black text-amber-400 flex items-center gap-1">R$ {(Number(globalMetrics.totalEstimatedProfit)||0).toFixed(2)} <Info size={12} className="text-gray-500 hidden md:block" /></span>
+               </div>
+             </button>
+          </div>
+
+          {/* MODAL: EDITAR CLIENTE */}
+          {editingCustomer && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-amber-50 dark:bg-gray-900">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><Edit size={18} className="text-amber-600"/> Editar Cliente</h3>
+                  <button onClick={() => setEditingCustomer(null)} className="text-gray-400 hover:text-red-500"><X size={20} /></button>
+                </div>
+                <form onSubmit={handleSaveEditCustomer} className="p-6 space-y-4">
+                  <div className="bg-amber-50/50 dark:bg-gray-900/50 border border-amber-200/50 dark:border-gray-700 p-3 rounded-xl mb-4">
+                     <p className="text-[10px] text-amber-800 dark:text-amber-400 font-medium leading-tight">
+                       💡 <b>Aviso:</b> Se alterar o nome para um cliente que já existe, os dois serão <b>unidos num só</b> e as compras serão somadas automaticamente! Ideal para corrigir erros de digitação.
+                     </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nome</label>
+                    <input type="text" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.name} onChange={e => setEditingCustomer({...editingCustomer, name: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Qtd. Compras</label>
+                    <input type="number" min="0" required className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.purchases} onChange={e => setEditingCustomer({...editingCustomer, purchases: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Quem indicou? (Opcional)</label>
+                    <input list="customers-list" type="text" className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg outline-none text-gray-800 dark:text-gray-200" value={editingCustomer.referredByInput !== undefined ? editingCustomer.referredByInput : ''} onChange={e => setEditingCustomer({...editingCustomer, referredByInput: e.target.value})} placeholder="Busque ou apague para remover..." />
+                  </div>
+                  <button type="submit" className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl mt-2 hover:bg-amber-700 shadow-sm">Salvar Alterações</button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: EDITAR RESERVA/ENCOMENDA */}
           {editingReservation && (
             <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
@@ -2715,4 +2771,3 @@ export default function CookieDashboard() {
     </div>
   );
 }
-                 
