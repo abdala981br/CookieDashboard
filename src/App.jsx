@@ -2651,7 +2651,7 @@ export default function CookieDashboard() {
           <div className="fixed bottom-20 md:bottom-8 left-1/2 transform -translate-x-1/2 z-40 flex flex-col items-center">
              {showFooterDetails && (
                <div className="mb-2 bg-gray-800 dark:bg-gray-900 border border-gray-700 shadow-2xl rounded-2xl p-5 text-sm text-gray-200 w-80 animate-in fade-in slide-in-from-bottom-2">
-                 <div className="flex items-center gap-2
+                 <div className="flex items-center gap-2>
                  {/* MODAL: EDITAR RESERVA/ENCOMENDA */}
           {editingReservation && (
             <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
