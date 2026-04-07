@@ -3,6 +3,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, initializeFirestore } from 'firebase/firestore';
+import InventoryView from './views/InventoryView';
+import DashboardView from './views/DashboardView';
+
 
 // IMPORTAÇÕES DOS ÍCONES
 import { 
@@ -1463,580 +1466,64 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-32 md:pb-32">
           
-          {/* TAB: DASHBOARD PRO */}
-          {activeTab === 'dashboard' && (
-            <div className="space-y-8 max-w-7xl mx-auto animate-in fade-in duration-300">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-2 gap-4">
-                <div>
-                  <h2 className="text-3xl font-black text-amber-950 dark:text-[#F3E8D6]">Visão Geral <span className="text-amber-600 dark:text-[#C17F59]">PRO</span></h2>
-                  <p className="text-stone-600 dark:text-[#E2D4C1] mt-1 font-medium">O cérebro do seu negócio. Acompanhe metas, lucro e tome decisões.</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  {lastSync && <span className="text-xs text-stone-500 dark:text-stone-400 font-bold flex items-center gap-1"><Clock size={12}/> {lastSync}</span>}
-                </div>
-              </div>
+         <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-32">
+  {activeTab === 'dashboard' && (
+    <DashboardView 
+      globalMetrics={globalMetrics}
+      timeStats={timeStats}
+      pendingRewards={pendingRewards}
+      projection={projection}
+      productIntel={productIntel}
+      customerIntel={customerIntel}
+      lastSync={lastSync}
+      goals={goals}
+      setGoals={setGoals}
+      products={products}
+      quickSale={quickSale}
+      setQuickSale={setQuickSale}
+      quickSaleCart={quickSaleCart}
+      setQuickSaleCart={setQuickSaleCart}
+      onlineOrders={onlineOrders}
+      handleApproveOnlineOrder={handleApproveOnlineOrder}
+      handleRejectOnlineOrder={handleRejectOnlineOrder}
+      handleFinalizeQuickSale={handleFinalizeQuickSale}
+      handleAddToCartQuickSale={handleAddToCartQuickSale}
+      sortedReservations={sortedReservations}
+      expectedMetrics={expectedMetrics}
+      reservationSortBy={reservationSortBy}
+      setReservationSortBy={setReservationSortBy}
+      weeklyStats={weeklyStats}
+      maxWeeklyRevenue={maxWeeklyRevenue}
+      setShowSalesHistory={setShowSalesHistory}
+    />
+  )}
+</main>
 
-              {pendingRewards.length > 0 && (
-                <div className="bg-gradient-to-r from-amber-600 to-amber-800 dark:from-[#3D2C20] dark:to-[#2C1E16] border border-amber-900/50 dark:border-[#4A3B32] p-5 rounded-3xl shadow-md text-white dark:text-[#F3E8D6] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in slide-in-from-top-4">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-white/20 dark:bg-black/20 p-3 rounded-2xl"><Gift size={28} className="dark:text-[#C17F59]"/></div>
-                    <div>
-                      <h3 className="font-bold text-lg leading-tight">Recompensas de Indicação!</h3>
-                      <p className="text-sm text-amber-100 dark:text-[#E2D4C1]">Clientes atingiram os marcos do programa de fidelidade.</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                    {pendingRewards.map(c => (
-                      <span key={c.id} className="bg-white dark:bg-[#1A0F0A] text-amber-900 dark:text-[#C17F59] border border-transparent dark:border-[#4A3B32] px-3 py-1.5 rounded-xl text-sm font-bold shadow-sm flex items-center gap-2">
-                        {c.name} <span className="text-xs font-medium text-stone-500 dark:text-stone-400">({c.referralsCount} ind.)</span> ➔ 
-                        {c.referralsCount === 2 ? ' 1 Brinde Peq.' : ' 1 Brinde Trad.'}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
 
-              <div>
-                <h3 className="text-sm font-black text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-3">Visão Rápida (Total)</h3>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="bg-white dark:bg-[#3D2C20] p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col justify-between">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-stone-500 dark:text-[#E2D4C1] font-bold">Faturamento</p>
-                      <div className="bg-green-100 dark:bg-green-900/30 p-1.5 rounded-lg text-green-600 dark:text-green-400"><DollarSign size={16} /></div>
-                    </div>
-                    <p className="text-xl font-black text-amber-950 dark:text-[#F3E8D6]">R$ {(Number(globalMetrics.totalRevenue) || 0).toFixed(2)}</p>
-                  </div>
-                  <div className="bg-white dark:bg-[#3D2C20] p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col justify-between">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-stone-500 dark:text-[#E2D4C1] font-bold">Lucro Real</p>
-                      <div className="bg-green-100 dark:bg-green-900/30 p-1.5 rounded-lg text-green-600 dark:text-green-400"><TrendingUp size={16} /></div>
-                    </div>
-                    <p className="text-xl font-black text-green-600 dark:text-green-400">R$ {(Number(globalMetrics.totalEstimatedProfit) || 0).toFixed(2)}</p>
-                  </div>
-                  <div className="bg-white dark:bg-[#3D2C20] p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col justify-between">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-amber-700 dark:text-[#C17F59] font-bold" title="Quanto você gastaria no mercado agora para bater +1 receita">Custo Reposição (+1)</p>
-                      <div className="bg-red-100 dark:bg-red-900/30 p-1.5 rounded-lg text-red-600 dark:text-red-400"><ShoppingCart size={16} /></div>
-                    </div>
-                    <p className="text-xl font-black text-red-600 dark:text-red-400">R$ {(Number(missingCostForOneBatch) || 0).toFixed(2)}</p>
-                  </div>
-                  <div className="bg-white dark:bg-[#3D2C20] p-5 rounded-2xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col justify-between">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-stone-500 dark:text-[#E2D4C1] font-bold">Itens Vendidos</p>
-                      <div className="bg-amber-100 dark:bg-[#2C1E16] p-1.5 rounded-lg text-amber-800 dark:text-[#C17F59]"><Coffee size={16} /></div>
-                    </div>
-                    <p className="text-xl font-black text-amber-800 dark:text-[#C17F59]">{globalMetrics.totalCookiesSold} un.</p>
-                  </div>
-                  <div className="bg-amber-50 dark:bg-[#2C1E16] p-5 rounded-2xl shadow-sm border border-amber-200 dark:border-[#4A3B32] col-span-2 md:col-span-1 flex flex-col justify-between">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs text-amber-900 dark:text-[#E2D4C1] font-bold">Nº Clientes</p>
-                      <div className="bg-blue-100 dark:bg-blue-900/30 p-1.5 rounded-lg text-blue-600 dark:text-blue-400"><Users size={16} /></div>
-                    </div>
-                    <p className="text-xl font-black text-blue-600 dark:text-blue-400">{customers.length}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div>
-                   <h3 className="text-sm font-black text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-3">Desempenho (Curto Prazo)</h3>
-                   <div className="grid grid-cols-2 gap-4 h-[calc(100%-2rem)]">
-                     <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col justify-center relative overflow-hidden">
-                       <div className="relative z-10">
-                         <p className="text-sm text-stone-500 dark:text-[#E2D4C1] font-bold mb-2">Vendas Hoje</p>
-                         <p className="text-3xl font-black text-amber-950 dark:text-[#F3E8D6] mb-3">R$ {(Number(timeStats.revToday) || 0).toFixed(2)}</p>
-                         <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold ${timeStats.todayGrowth >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
-                           {timeStats.todayGrowth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
-                           {timeStats.todayGrowth > 0 ? '+' : ''}{(Number(timeStats.todayGrowth) || 0).toFixed(1)}% vs Ontem
-                         </div>
-                       </div>
-                       <LineChart className="absolute -bottom-4 -right-4 text-amber-50 dark:text-black/10 w-32 h-32" />
-                     </div>
-                     <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col justify-center relative overflow-hidden">
-                       <div className="relative z-10">
-                         <p className="text-sm text-stone-500 dark:text-[#E2D4C1] font-bold mb-2">Últimos 7 Dias</p>
-                         <p className="text-3xl font-black text-amber-950 dark:text-[#F3E8D6] mb-3">R$ {(Number(timeStats.rev7Days) || 0).toFixed(2)}</p>
-                         <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold ${timeStats.weekGrowth >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
-                           {timeStats.weekGrowth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
-                           {timeStats.weekGrowth > 0 ? '+' : ''}{(Number(timeStats.weekGrowth) || 0).toFixed(1)}% vs Sem. Pass.
-                         </div>
-                       </div>
-                       <Calendar className="absolute -bottom-4 -right-4 text-amber-50 dark:text-black/10 w-32 h-32" />
-                     </div>
-                   </div>
-                </div>
-
-                <div>
-                   <h3 className="text-sm font-black text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-3">Crescimento e Metas</h3>
-                   <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] h-[calc(100%-2rem)] flex flex-col justify-center space-y-6">
-                     <div>
-                       <div className="flex justify-between items-end mb-2">
-                         <div>
-                           <p className="text-sm font-bold text-amber-950 dark:text-[#F3E8D6] flex items-center gap-2"><Target size={16} className="text-amber-800 dark:text-[#C17F59]"/> Meta Diária</p>
-                           <p className="text-xs text-stone-500 dark:text-[#E2D4C1] mt-0.5 font-medium">R$ {(Number(timeStats.revToday) || 0).toFixed(2)} / R$ <input type="number" className="w-12 bg-transparent border-b border-amber-200 dark:border-[#4A3B32] outline-none text-center text-amber-800 dark:text-[#C17F59] font-black" value={goals.daily} onChange={(e) => setGoals({...goals, daily: Number(e.target.value)})}/></p>
-                         </div>
-                         <span className="text-sm font-black text-amber-800 dark:text-[#C17F59]">{Math.min(((Number(timeStats.revToday)||0) / Math.max(goals.daily, 1)) * 100, 100).toFixed(0)}%</span>
-                       </div>
-                       <div className="w-full bg-amber-50 dark:bg-[#2C1E16] rounded-full h-3 overflow-hidden border border-amber-100 dark:border-transparent">
-                         <div className="bg-amber-800 dark:bg-[#C17F59] h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min(((Number(timeStats.revToday)||0) / Math.max(goals.daily, 1)) * 100, 100)}%` }}></div>
-                       </div>
-                     </div>
-
-                     <div>
-                       <div className="flex justify-between items-end mb-2">
-                         <div>
-                           <p className="text-sm font-bold text-amber-950 dark:text-[#F3E8D6] flex items-center gap-2"><Target size={16} className="text-amber-800 dark:text-[#C17F59]"/> Meta Semanal</p>
-                           <p className="text-xs text-stone-500 dark:text-[#E2D4C1] mt-0.5 font-medium">R$ {(Number(timeStats.rev7Days)||0).toFixed(2)} / R$ <input type="number" className="w-16 bg-transparent border-b border-amber-200 dark:border-[#4A3B32] outline-none text-center text-amber-800 dark:text-[#C17F59] font-black" value={goals.weekly} onChange={(e) => setGoals({...goals, weekly: Number(e.target.value)})}/></p>
-                         </div>
-                         <span className="text-sm font-black text-amber-800 dark:text-[#C17F59]">{Math.min(((Number(timeStats.rev7Days)||0) / Math.max(goals.weekly, 1)) * 100, 100).toFixed(0)}%</span>
-                       </div>
-                       <div className="w-full bg-amber-50 dark:bg-[#2C1E16] rounded-full h-3 overflow-hidden border border-amber-100 dark:border-transparent">
-                         <div className="bg-amber-800 dark:bg-[#C17F59] h-3 rounded-full transition-all duration-500" style={{ width: `${Math.min(((Number(timeStats.rev7Days)||0) / Math.max(goals.weekly, 1)) * 100, 100)}%` }}></div>
-                       </div>
-                     </div>
-
-                     <div className="pt-4 border-t border-amber-50 dark:border-[#4A3B32] flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <Crosshair className="text-blue-500" size={20}/>
-                          <div>
-                            <p className="text-xs text-stone-500 dark:text-[#E2D4C1] font-bold">Projeção do Mês (se continuar assim)</p>
-                            <p className="text-lg font-black text-blue-600 dark:text-blue-400">R$ {(Number(projection)||0).toFixed(2)}</p>
-                          </div>
-                        </div>
-                     </div>
-                   </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-black text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-3">Inteligência de Produto & Clientes</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32]">
-                    <div className="bg-amber-100 dark:bg-[#2C1E16] w-10 h-10 rounded-xl flex items-center justify-center text-amber-800 dark:text-[#C17F59] mb-4"><Trophy size={20}/></div>
-                    <p className="text-sm text-stone-500 dark:text-[#E2D4C1] font-bold">Produto Mais Vendido</p>
-                    <p className="text-lg font-black text-amber-950 dark:text-[#F3E8D6]">{productIntel?.topSold?.name || 'Nenhum dado'}</p>
-                    <p className="text-xs text-amber-800 dark:text-[#C17F59] mt-1 font-bold">{productIntel?.topSold?.qty || 0} unidades vendidas</p>
-                  </div>
-                  <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-green-100 dark:border-[#4A3B32]">
-                    <div className="bg-green-100 dark:bg-green-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-green-600 dark:text-green-400 mb-4"><Flame size={20}/></div>
-                    <p className="text-sm text-stone-500 dark:text-[#E2D4C1] font-bold">Produto Mais Lucrativo</p>
-                    <p className="text-lg font-black text-amber-950 dark:text-[#F3E8D6]">{productIntel?.topProfit?.name || 'Nenhum dado'}</p>
-                    <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-bold">R$ {(Number(productIntel?.topProfit?.profit)||0).toFixed(2)} gerados em lucro</p>
-                  </div>
-                  <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-blue-100 dark:border-[#4A3B32]">
-                    <div className="bg-blue-100 dark:bg-blue-900/30 w-10 h-10 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400 mb-4"><UsersRound size={20}/></div>
-                    <p className="text-sm text-stone-500 dark:text-[#E2D4C1] font-bold">Comportamento (Clientes)</p>
-                    <div className="flex items-end gap-2 mt-1">
-                      <p className="text-2xl font-black text-blue-600 dark:text-blue-400">{(Number(customerIntel.recorrentesPercent)||0).toFixed(0)}%</p>
-                      <p className="text-xs text-stone-500 dark:text-stone-400 mb-1 font-medium">são clientes fiéis.</p>
-                    </div>
-                    <div className="flex justify-between text-xs font-bold text-stone-400 mt-2">
-                       <span>{customerIntel.novos} Novos</span>
-                       <span>{customerIntel.recorrentes} Fiéis</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-black text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-3">Operação (Vendas & Entregas)</h3>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  
-                  {/* Formulário Rápido de Nova Venda (Carrinho + Observação + Busca Inteligente) */}
-                  <div className="lg:col-span-1 bg-amber-800 dark:bg-[#2C1E16] rounded-3xl shadow-sm p-6 text-white dark:text-[#F3E8D6] relative flex flex-col transition-colors border border-transparent dark:border-[#4A3B32]">
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-amber-900 dark:bg-black rounded-full blur-3xl -mr-10 -mt-10 opacity-50 pointer-events-none"></div>
-                    
-                    <h3 className="text-xl font-bold mb-6 flex items-center gap-2 relative z-10">
-                      <ShoppingCart size={22} /> Nova Venda Rápida
-                    </h3>
-                    
-                    <form onSubmit={handleFinalizeQuickSale} className="space-y-4 relative z-10 flex-1 flex flex-col">
-                      <div>
-                        <label className="block text-xs font-bold text-amber-100 dark:text-[#E2D4C1] mb-1">Nome do Cliente</label>
-                        <input list="customers-list" required type="text" className="w-full p-2.5 bg-white/10 border border-amber-600 dark:border-[#4A3B32] rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition font-medium" value={quickSale.customerName} onChange={e => setQuickSale({...quickSale, customerName: e.target.value})} placeholder="Escreva ou escolha..." />
-                      </div>
-                      
-                      <div className="flex gap-3">
-                        <div className="w-1/2">
-                          <label className="block text-xs font-bold text-amber-100 dark:text-[#E2D4C1] mb-1">Data da Venda</label>
-                          <input 
-                            type="date" 
-                            required 
-                            className="w-full p-2.5 bg-white/10 border border-amber-600 dark:border-[#4A3B32] rounded-xl outline-none focus:bg-white/20 text-white transition [&::-webkit-calendar-picker-indicator]:invert font-medium" 
-                            value={quickSale.date} 
-                            onChange={e => setQuickSale({...quickSale, date: e.target.value})} 
-                          />
-                        </div>
-                        <div className="w-1/2">
-                          <label className="block text-xs font-bold text-amber-100 dark:text-[#E2D4C1] mb-1">Quem indicou? (Opc.)</label>
-                          <input 
-                             list="customers-list" 
-                             type="text" 
-                             className="w-full p-2.5 bg-white/10 border border-amber-600 dark:border-[#4A3B32] rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition font-medium" 
-                             value={quickSale.referredByInput} 
-                             onChange={e => setQuickSale({...quickSale, referredByInput: e.target.value})} 
-                             placeholder="Busque..." 
-                          />
-                        </div>
-                      </div>
-
-                      <div className="bg-amber-900/30 dark:bg-black/20 p-4 rounded-2xl border border-amber-600/50 dark:border-[#4A3B32] mt-2">
-                        <label className="block text-xs font-bold text-amber-100 dark:text-[#E2D4C1] mb-1">Selecionar Item</label>
-                        <select className="w-full p-2.5 bg-white/10 border border-amber-600/50 dark:border-[#4A3B32] rounded-xl outline-none focus:bg-white/20 text-white dark:text-[#E2D4C1] [&>optgroup]:text-amber-950 [&>option]:text-amber-950 transition mb-3 text-sm font-medium" value={quickSale.productId} onChange={e => setQuickSale({...quickSale, productId: e.target.value})}>
-                          {products.length === 0 ? <option value="">Cadastre no Catálogo</option> : (
-                            <>
-                              <optgroup label="Produtos Individuais">{products.filter(p => p.type === 'single' || !p.type).map(p => <option key={p.id} value={p.id}>{p.name} - R$ {(Number(p.price)||0).toFixed(2)}</option>)}</optgroup>
-                              {products.filter(p => p.type === 'combo').length > 0 && <optgroup label="Combos e Promoções">{products.filter(p => p.type === 'combo').map(p => <option key={p.id} value={p.id}>{p.name} ({p.units} un) - R$ {(Number(p.price)||0).toFixed(2)}</option>)}</optgroup>}
-                            </>
-                          )}
-                        </select>
-                        <div className="flex gap-3 mb-3">
-                          <div className="w-1/2">
-                            <label className="block text-[10px] uppercase tracking-wider font-black text-amber-200/80 dark:text-[#C17F59] mb-1">Quantidade</label>
-                            <input type="number" min="1" className="w-full p-2 bg-white/10 border border-amber-600/50 dark:border-[#4A3B32] rounded-xl outline-none focus:bg-white/20 text-white transition text-center font-bold" value={quickSale.quantity} onChange={e => setQuickSale({...quickSale, quantity: Number(e.target.value)})} />
-                          </div>
-                          <div className="w-1/2">
-                            <label className="block text-[10px] uppercase tracking-wider font-black text-amber-200/80 dark:text-[#C17F59] mb-1">Total (R$)</label>
-                            <input type="number" step="0.5" className="w-full p-2 bg-white border border-transparent rounded-xl outline-none text-amber-950 font-black text-center" value={quickSale.revenue} onChange={e => setQuickSale({...quickSale, revenue: Number(e.target.value)})} />
-                          </div>
-                        </div>
-                        <div className="mb-3">
-                          <label className="block text-[10px] uppercase tracking-wider font-black text-amber-200/80 dark:text-[#C17F59] mb-1">Observações</label>
-                          <input type="text" className="w-full p-2 bg-white/10 border border-amber-600/50 dark:border-[#4A3B32] rounded-xl outline-none focus:bg-white/20 text-white placeholder-amber-200/50 transition text-sm font-medium" value={quickSale.observation} onChange={e => setQuickSale({...quickSale, observation: e.target.value})} placeholder="Ex: Sem chocolate..." />
-                        </div>
-                        <button type="button" onClick={handleAddToCartQuickSale} className="w-full bg-amber-500 hover:bg-amber-400 dark:bg-[#C17F59] dark:hover:bg-[#A66A4B] text-amber-950 py-2 rounded-xl font-bold transition shadow-sm text-sm">
-                          + Adicionar ao Pedido
-                        </button>
-                      </div>
-
-                      {quickSaleCart.length > 0 && (
-                        <div className="bg-white/10 dark:bg-[#1A0F0A] p-3 rounded-xl text-sm border border-amber-600/30 dark:border-[#4A3B32]">
-                          <p className="font-bold text-amber-200 dark:text-[#C17F59] mb-2">Itens no Pedido:</p>
-                          {quickSaleCart.map((item, i) => (
-                            <div key={i} className="flex justify-between items-center text-white dark:text-[#E2D4C1] mb-1 pb-1 border-b border-amber-600/20 dark:border-[#3D2C20] last:border-0 font-medium">
-                              <div className="flex flex-col">
-                                <span>{item.quantity}x {item.productName}</span>
-                                {item.observation && <span className="text-[10px] text-amber-200/70 dark:text-[#C17F59]/70 italic">Obs: {item.observation}</span>}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold">R$ {(Number(item.revenue)||0).toFixed(2)}</span>
-                                <button type="button" onClick={() => setQuickSaleCart(quickSaleCart.filter((_, idx) => idx !== i))} className="text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
-                              </div>
-                            </div>
-                          ))}
-                          <div className="pt-2 mt-1 font-black text-white flex justify-between text-base">
-                             <span>Total:</span>
-                             <span>R$ {(quickSaleCart.reduce((a,b)=>a+(Number(b.revenue)||0), 0) + (quickSale.quantity > 0 && quickSale.revenue > 0 && !quickSaleCart.find(i=>i.productId===quickSale.productId && i.quantity===quickSale.quantity) ? Number(quickSale.revenue) : 0)).toFixed(2)}</span>
-                          </div>
-                        </div>
-                      )}
-
-                      <button type="submit" className="w-full bg-white text-amber-900 hover:bg-amber-50 dark:bg-[#3D2C20] dark:text-[#F3E8D6] dark:hover:bg-[#4A3B32] py-3.5 rounded-xl font-bold mt-auto transition shadow-sm text-lg">
-                        Registrar Venda
-                      </button>
-                    </form>
-                  </div>
-
-                  <div className="lg:col-span-2 space-y-6">
-                    {/* PEDIDOS DO WHATSAPP (NOVO) */}
-                    <div className="bg-green-50/50 dark:bg-[#1A261A] rounded-3xl shadow-sm border border-green-200 dark:border-[#2C4A2C] overflow-hidden transition-colors">
-                      <div className="p-4 border-b border-green-200 dark:border-[#2C4A2C] bg-green-100/50 dark:bg-[#2C4A2C]/30 flex justify-between items-center">
-                         <h3 className="font-bold text-green-900 dark:text-green-400 flex items-center gap-2"><ShoppingCart size={18}/> 🛒 Pedidos da Loja Online</h3>
-                         <span className="text-xs font-bold bg-white dark:bg-[#1A261A] px-2 py-1 rounded-md text-green-700 dark:text-green-400 border border-green-100 dark:border-[#2C4A2C]">{onlineOrders.length} aguardando aprovação</span>
-                      </div>
-                      <div className="overflow-x-auto max-h-[300px]">
-                        <table className="w-full text-left border-collapse">
-                          <tbody>
-                            {onlineOrders.length === 0 ? (
-                              <tr><td colSpan="4" className="p-6 text-center text-sm font-bold text-stone-500 dark:text-[#4A3B32]">Nenhum pedido novo do site.</td></tr>
-                            ) : onlineOrders.map((order) => (
-                              <tr key={order.id} className="border-b border-green-50 dark:border-[#2C4A2C]/30 hover:bg-white dark:hover:bg-[#203320] transition-colors">
-                                <td className="p-3">
-                                  <div className="flex flex-col gap-0.5">
-                                    <p className="font-bold text-sm text-amber-950 dark:text-[#F3E8D6]">{order.customerName}</p>
-                                    <p className="text-[10px] text-stone-500 font-bold">Criado em: {new Date(order.createdAt).toLocaleDateString('pt-BR')}</p>
-                                    {order.referredByInput && <p className="text-[10px] text-amber-600 dark:text-[#C17F59] font-bold">🌟 Indicação: {order.referredByInput}</p>}
-                                  </div>
-                                </td>
-                                <td className="p-3">
-                                  <div className="flex flex-col gap-1">
-                                    {order.cart.map((item, idx) => (
-                                      <p key={idx} className="text-xs text-stone-600 dark:text-[#E2D4C1] font-bold">
-                                        {item.qty}x {item.name}
-                                      </p>
-                                    ))}
-                                    {order.orderObservation && <p className="text-[10px] text-amber-700 dark:text-[#C17F59] font-bold italic mt-1 bg-amber-50 dark:bg-[#2C1E16] w-fit px-1 rounded">Obs: {order.orderObservation}</p>}
-                                    <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-1 bg-blue-50 dark:bg-blue-900/30 w-fit px-1 rounded">
-                                      Entrega: {order.deliveryType === 'unesp' ? `UNESP (${order.period})` : `Casa (${order.address})`} - {new Date(order.deliveryDate).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}
-                                    </p>
-                                  </div>
-                                </td>
-                                <td className="p-3 text-right text-sm font-black text-green-700 dark:text-green-500">R$ {(Number(order.total)||0).toFixed(2)}</td>
-                                <td className="p-3 text-center flex flex-col sm:flex-row items-center justify-center gap-1 mt-2">
-                                  <button onClick={() => handleApproveOnlineOrder(order)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1.5 text-xs font-bold rounded shadow-sm transition-colors w-full sm:w-auto">Aprovar</button>
-                                  <button onClick={() => handleRejectOnlineOrder(order.id)} className="text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded transition-colors w-full sm:w-auto" title="Descartar"><Trash2 size={16} className="mx-auto"/></button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    <div className="bg-white dark:bg-[#3D2C20] rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] p-6 flex flex-col transition-colors">
-                      <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-lg font-bold text-amber-950 dark:text-[#F3E8D6] flex items-center gap-2">
-                          <Clock className="text-amber-800 dark:text-[#C17F59]" size={20}/> Entregas Pendentes
-                        </h3>
-                        <span className="text-sm font-black text-amber-800 dark:text-[#C17F59] bg-amber-50 dark:bg-[#2C1E16] px-3 py-1 rounded-lg">R$ {(Number(expectedMetrics.revenue)||0).toFixed(2)}</span>
-                      </div>
-                      
-                      <div className="flex justify-between items-center mb-3">
-                         <span className="text-xs font-bold text-stone-500 dark:text-stone-400">Filtrar por:</span>
-                         <select className="text-xs bg-amber-50 border border-amber-100 rounded p-1 outline-none font-bold text-amber-900 dark:bg-[#2C1E16] dark:border-[#4A3B32] dark:text-[#F3E8D6] cursor-pointer" value={reservationSortBy} onChange={e => setReservationSortBy(e.target.value)}>
-                           <option value="date-asc">Data ⬆</option>
-                           <option value="date-desc">Data ⬇</option>
-                           <option value="name-asc">Nome Cliente (A-Z)</option>
-                           <option value="product-asc">Produto (A-Z)</option>
-                         </select>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto space-y-3 pr-2 max-h-[300px]">
-                        {sortedReservations.pending.length === 0 ? (
-                          <p className="text-sm text-stone-400 font-bold text-center mt-4">Nenhuma encomenda pendente para entregar.</p>
-                        ) : (
-                          sortedReservations.pending.map(res => (
-                            <div key={res.id} className="flex flex-col p-3 bg-amber-50/50 dark:bg-[#2C1E16] rounded-xl border border-amber-100 dark:border-[#4A3B32] transition-colors">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <p className="font-bold text-sm text-amber-950 dark:text-[#F3E8D6]">{res.name}</p>
-                                  <div className="flex items-center gap-1 group relative">
-                                    <p className="text-xs text-stone-600 dark:text-[#E2D4C1] font-bold">{res.quantity}x {res.productName}</p>
-                                    {res.observation && (
-                                      <div className="relative flex items-center ml-1">
-                                        <Info size={14} className="text-amber-600 dark:text-[#C17F59] cursor-help" title={res.observation} />
-                                        <div className="absolute left-6 top-1/2 transform -translate-y-1/2 hidden group-hover:block bg-amber-950 dark:bg-black text-white text-xs p-2 rounded shadow-xl z-[100] whitespace-nowrap min-w-[120px] border border-amber-800 dark:border-[#3D2C20]">
-                                          {res.observation}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="text-right flex flex-col items-end gap-2">
-                                  <span className="text-xs font-black text-amber-800 dark:text-[#C17F59] bg-white dark:bg-[#3D2C20] px-2 py-1 rounded-lg border border-amber-100 dark:border-[#4A3B32]">
-                                    {res.date ? new Date(res.date).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short', timeZone: 'UTC'}) : 'A comb.'}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      
-                      <div className="mt-4 pt-4 border-t border-amber-50 dark:border-[#4A3B32] flex justify-between items-center">
-                        <p className="text-sm font-bold text-stone-600 dark:text-[#E2D4C1]">Total a Produzir:</p>
-                        <p className="text-lg font-black text-amber-800 dark:text-[#C17F59]">{expectedMetrics.cookies} unidades</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-black text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-3">Histórico de Evolução</h3>
-                <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] flex flex-col transition-colors">
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <h3 className="text-lg font-bold text-amber-950 dark:text-[#F3E8D6] flex items-center gap-2">
-                        <Activity className="text-amber-800 dark:text-[#C17F59]" size={20}/> Histórico de Receita e Lucro
-                      </h3>
-                      <p className="text-xs text-stone-500 dark:text-stone-400 mt-1 font-medium">Desempenho por semana (Últimas 6 semanas).</p>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <button onClick={() => setShowSalesHistory(true)} className="flex items-center gap-2 text-sm bg-amber-50 dark:bg-[#2C1E16] hover:bg-amber-100 dark:hover:bg-[#4A3B32] text-amber-800 dark:text-[#C17F59] px-3 py-1.5 rounded-lg transition-colors font-bold border border-amber-200 dark:border-[#4A3B32]">
-                        <History size={16} /> Ver Histórico Detalhado
-                      </button>
-                      <div className="flex items-center gap-4 text-xs font-bold mt-1 text-stone-600 dark:text-stone-300">
-                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-amber-800 dark:bg-[#C17F59]"></div> Receita Total</span>
-                        <span className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500 dark:bg-green-500"></div> Lucro Real</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 w-full flex items-end justify-between gap-2 mt-auto pt-4 border-b border-amber-50 dark:border-[#4A3B32] pb-0 relative h-[250px]">
-                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 dark:opacity-10 pb-0">
-                      <div className="border-t border-amber-900 dark:border-white w-full"></div>
-                      <div className="border-t border-amber-900 dark:border-white w-full"></div>
-                      <div className="border-t border-amber-900 dark:border-white w-full"></div>
-                    </div>
-
-                    {weeklyStats.map((data, index) => {
-                      const revenueHeight = maxWeeklyRevenue > 0 ? (data.revenue / maxWeeklyRevenue) * 100 : 0;
-                      const profitHeight = maxWeeklyRevenue > 0 && data.revenue > 0 ? (Math.max(data.estimatedProfit, 0) / maxWeeklyRevenue) * 100 : 0;
-                      return (
-                        <div key={index} className="flex flex-col items-center flex-1 group z-10 h-[200px] justify-end">
-                          <div className="w-full relative h-[180px] flex items-end justify-center gap-1 sm:gap-2">
-                            
-                            <div className="w-3 sm:w-5 bg-amber-800 dark:bg-[#C17F59] rounded-t-sm group-hover:bg-amber-900 dark:group-hover:bg-[#A66A4B] transition-all duration-300" style={{ height: `${revenueHeight}%`, minHeight: data.revenue > 0 ? '8px' : '0' }}></div>
-                            
-                            <div className="w-3 sm:w-5 bg-green-500 dark:bg-green-500/80 rounded-t-sm group-hover:bg-green-400 transition-all duration-300 shadow-[0_-1px_3px_rgba(0,0,0,0.1)] dark:shadow-none" style={{ height: `${profitHeight}%`, minHeight: data.estimatedProfit > 0 ? '8px' : '0' }}></div>
-                            
-                            {data.revenue > 0 && (
-                              <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-amber-950 dark:bg-white text-white dark:text-[#221510] text-xs py-1.5 px-3 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 flex flex-col items-center shadow-lg">
-                                <span className="font-black">Rec: R$ {(Number(data.revenue)||0).toFixed(2)}</span>
-                                <span className="text-green-300 dark:text-green-600 text-[10px] font-bold">Lucro: R$ {(Number(data.estimatedProfit)||0).toFixed(2)}</span>
-                              </div>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-stone-500 dark:text-stone-400 mt-2 font-bold text-center leading-tight max-w-[70px] whitespace-pre-line h-[20px]">{data.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          )}
-
-          {/* TAB: ESTOQUE E PRODUÇÃO */}
-          {activeTab === 'inventory' && (
-            <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
-              <div className="flex justify-between items-end mb-6">
-                <div>
-                  <h2 className="text-3xl font-black text-amber-950 dark:text-[#F3E8D6]">Estoque e Produção</h2>
-                  <p className="text-stone-600 dark:text-[#E2D4C1] mt-2 font-medium">Simule produções, atualize o estoque e gere a lista de compras.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1 space-y-6">
-                  <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] transition-colors">
-                    <h3 className="text-lg font-bold text-amber-950 dark:text-[#F3E8D6] mb-4 flex items-center gap-2">
-                      <Coffee className="text-amber-800 dark:text-[#C17F59]" size={20}/> Simulador
-                    </h3>
-                    <label className="block text-sm font-bold text-stone-700 dark:text-stone-300 mb-2">Quantas receitas vai bater?</label>
-                    <div className="flex items-center gap-3 mb-4">
-                      <button onClick={() => setProductionBatches(Math.max(1, productionBatches - 1))} className="bg-amber-50 dark:bg-[#2C1E16] border border-amber-200 dark:border-[#4A3B32] w-10 h-10 rounded-xl flex items-center justify-center font-bold text-amber-950 dark:text-[#F3E8D6] hover:bg-amber-100 transition">-</button>
-                      <input type="number" min="1" className="w-full h-10 text-center font-black text-lg bg-amber-50 dark:bg-[#2C1E16] border border-amber-200 dark:border-[#4A3B32] rounded-xl text-amber-950 dark:text-[#F3E8D6] outline-none" value={productionBatches} onChange={e => setProductionBatches(Math.max(1, Number(e.target.value)))} />
-                      <button onClick={() => setProductionBatches(productionBatches + 1)} className="bg-amber-50 dark:bg-[#2C1E16] border border-amber-200 dark:border-[#4A3B32] w-10 h-10 rounded-xl flex items-center justify-center font-bold text-amber-950 dark:text-[#F3E8D6] hover:bg-amber-100 transition">+</button>
-                    </div>
-                    <div className="bg-amber-50/50 dark:bg-[#2C1E16] p-3 rounded-xl border border-amber-100 dark:border-[#4A3B32] mb-6">
-                      <p className="text-xs font-bold text-stone-500 dark:text-[#E2D4C1]">Rendimento Previsto:</p>
-                      <p className="text-lg font-black text-amber-800 dark:text-[#C17F59]">{productionBatches * (Number(recipeConfig.yield)||1)} cookies</p>
-                    </div>
-
-                    {!inventoryCheck.canProduce && (
-                       <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl flex items-start gap-2">
-                         <AlertTriangle size={16} className="text-red-500 mt-0.5 shrink-0"/>
-                         <div>
-                           <p className="text-xs font-black text-red-800 dark:text-red-400">Faltam ingredientes!</p>
-                           <p className="text-[10px] font-bold text-red-600 dark:text-red-300 mt-0.5">Se registrar a produção, assumiremos que comprou o que falta.</p>
-                         </div>
-                       </div>
-                    )}
-
-                    <button onClick={handleProduce} className="w-full bg-amber-800 dark:bg-[#C17F59] text-white dark:text-[#2C1E16] font-bold py-3 rounded-xl hover:bg-amber-900 dark:hover:bg-[#A66A4B] transition-colors shadow-sm flex items-center justify-center gap-2">
-                      <CheckCircle size={18}/> Registrar Produção
-                    </button>
-                  </div>
-
-                  {inventoryCheck.totalMissingCost > 0 && (
-                    <div className="bg-white dark:bg-[#3D2C20] p-6 rounded-3xl shadow-sm border border-red-100 dark:border-[#4A3B32] transition-colors">
-                      <h3 className="text-lg font-bold text-amber-950 dark:text-[#F3E8D6] mb-4 flex items-center gap-2">
-                        <ShoppingCart className="text-red-500" size={20}/> Lista de Compras
-                      </h3>
-                      <p className="text-xs font-bold text-stone-500 dark:text-stone-400 mb-4">Pacotes a comprar para {productionBatches} receita(s).</p>
-                      <div className="space-y-3 mb-4 max-h-[300px] overflow-y-auto pr-2">
-                        {inventoryCheck.list.filter(i => i.missingAmount > 0).map(ing => (
-                          <div key={ing.id} className="flex justify-between items-center pb-2 border-b border-amber-50 dark:border-[#4A3B32] last:border-0 last:pb-0">
-                             <div>
-                               <p className="font-black text-sm text-amber-950 dark:text-[#F3E8D6]">{ing.name}</p>
-                               <p className="text-[10px] font-bold text-red-500">Comprar: {ing.packagesToBuy} pct(s) ({ing.exactMissingToBuy}{ing.unit})</p>
-                             </div>
-                             <p className="text-sm font-black text-amber-900 dark:text-[#E2D4C1]">R$ {(Number(ing.costToBuy)||0).toFixed(2)}</p>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="pt-3 border-t border-amber-100 dark:border-[#4A3B32] flex justify-between items-center">
-                        <span className="font-bold text-stone-600 dark:text-[#E2D4C1] text-sm">Custo Ida ao Mercado:</span>
-                        <span className="font-black text-red-600 dark:text-red-400 text-lg">R$ {(Number(inventoryCheck.totalMissingCost)||0).toFixed(2)}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="lg:col-span-2 bg-white dark:bg-[#3D2C20] rounded-3xl shadow-sm border border-amber-100 dark:border-[#4A3B32] overflow-hidden transition-colors flex flex-col">
-                  <div className="p-6 border-b border-amber-100 dark:border-[#4A3B32] bg-amber-50/30 dark:bg-[#2C1E16] flex justify-between items-center">
-                    <div>
-                      <h3 className="font-bold text-amber-950 dark:text-[#F3E8D6] flex items-center gap-2"><Package className="text-amber-800 dark:text-[#C17F59]" size={20} /> Controle de Estoque</h3>
-                      <p className="text-xs text-stone-500 dark:text-[#E2D4C1] mt-1 font-medium">A sua lista de insumos. Edite as quantidades sempre que comprar material.</p>
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto flex-1">
-                    <table className="w-full text-left border-collapse min-w-max">
-                      <thead>
-                        <tr className="bg-amber-50 dark:bg-[#2C1E16] text-amber-900 dark:text-[#C17F59] border-b border-amber-100 dark:border-[#4A3B32] text-sm">
-                          <th className="p-4 font-black">Insumo</th>
-                          <th className="p-4 font-black text-center">Necessário p/ {productionBatches}x</th>
-                          <th className="p-4 font-black text-center">Em Estoque Atual</th>
-                          <th className="p-4 font-black text-center">Status</th>
+// Dentro do seu return (onde ficava o bloco anterior):
+{activeTab === 'inventory' && (
+  <InventoryView 
+    inventoryCheck={inventoryCheck}
+    productionBatches={productionBatches}
+    setProductionBatches={setProductionBatches}
+    recipeConfig={recipeConfig}
+    handleProduce={handleProduce}
+    handleToggleWaste={handleToggleWaste}
+    handleUpdateStock={handleUpdateStock}
+  />
+)}
+          ustomer.id} className="border-b border-amber-50 dark:border-[#4A3B32] hover:bg-amber-50/30 dark:hover:bg-[#2C1E16] transition-colors">
+                          <td className="p-4 font-black text-amber-950 dark:text-[#F3E8D6]">{customer.name || 'Sem nome'}</td>
+                          <td className="p-4 text-stone-600 dark:text-[#E2D4C1] text-sm font-medium">{customer.referrerName}</td>
+                          <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-black ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-[#1A0F0A] text-stone-500 dark:text-stone-400'}`}>{customer.referralsCount}</span></td>
+                          <td className="p-4 text-center font-black text-amber-800 dark:text-[#C17F59]">{customer.purchases || 0}</td>
+                          <td className="p-4 text-center flex items-center justify-center gap-2">
+                             <button onClick={() => setEditingCustomer({...customer, referredByInput: customer.referrerName === 'Ninguém (Direto)' ? '' : customer.referrerName})} className="p-2 text-amber-600 hover:bg-amber-50 dark:text-[#C17F59] dark:hover:bg-[#2C1E16] rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
+                             <button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-stone-400 dark:text-stone-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {inventoryCheck.list.map(ing => {
-                          const isOk = ing.missingAmount === 0;
-                          return (
-                            <tr key={ing.id} className="border-b border-amber-50 dark:border-[#4A3B32] hover:bg-amber-50/30 dark:hover:bg-[#2C1E16] transition-colors">
-                              <td className="p-4">
-                                <div className="flex flex-col gap-1 items-start">
-                                  <p className="font-black text-amber-950 dark:text-[#F3E8D6]">{ing.name}</p>
-                                  <button 
-                                    onClick={() => handleToggleWaste(ing.id, ing.applyWaste)}
-                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-colors border ${ing.applyWaste ? 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-[#3D2C20] dark:text-[#C17F59] dark:border-[#4A3B32]' : 'bg-gray-100 text-gray-500 border-gray-200 dark:bg-[#1A0F0A] dark:text-stone-500 dark:border-[#3D2C20]'}`}
-                                    title="Clique para ligar/desligar os 2% adicionais de desperdício na hora da compra"
-                                  >
-                                    {ing.applyWaste ? '+2% Quebra ON' : '+2% Quebra OFF'}
-                                  </button>
-                                </div>
-                              </td>
-                              <td className="p-4 text-center font-bold text-stone-600 dark:text-[#E2D4C1]">
-                                {(Number(ing.totalNeeded)||0).toFixed(1)} {ing.unit}
-                              </td>
-                              <td className="p-4 text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <input 
-                                    type="number" min="0" step="any"
-                                    className={`w-24 p-2 text-center text-sm font-black border rounded-lg outline-none transition-colors ${!isOk ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-400 focus:ring-2 focus:ring-red-500' : 'bg-amber-50 dark:bg-[#2C1E16] border-amber-200 dark:border-[#4A3B32] text-amber-950 dark:text-[#F3E8D6] focus:ring-2 focus:ring-amber-500 dark:focus:ring-[#C17F59]'}`}
-                                    value={ing.currentStock || ''} 
-                                    onChange={e => handleUpdateStock(ing.id, e.target.value)} 
-                                    placeholder="0"
-                                  />
-                                  <span className="text-xs font-bold text-stone-500 dark:text-stone-400 w-6 text-left">{ing.unit}</span>
-                                </div>
-                              </td>
-                              <td className="p-4 text-center">
-                                {isOk ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400"><CheckCircle size={12}/> Suficiente</span>
-                                ) : (
-                                  <div className="flex flex-col items-center gap-1">
-                                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400"><XCircle size={12}/> Faltam {ing.packagesToBuy} pct</span>
-                                    <span className="text-xs font-black text-red-600 dark:text-red-400">R$ {(Number(ing.costToBuy)||0).toFixed(2)}</span>
-                                  </div>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB: CATÁLOGO DE PRODUTOS */}
+                      ))}
+                   {/* TAB: CATÁLOGO DE PRODUTOS */}
           {activeTab === 'products' && (
             <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
               <div className="flex justify-between items-end mb-6">
@@ -2344,18 +1831,7 @@ export default function App() {
                       {sortedCustomersWithStats.length === 0 ? (
                         <tr><td colSpan="5" className="p-8 text-center text-stone-500 dark:text-[#E2D4C1] font-bold">Nenhum cliente na base.</td></tr>
                       ) : sortedCustomersWithStats.map((customer) => (
-                        <tr key={customer.id} className="border-b border-amber-50 dark:border-[#4A3B32] hover:bg-amber-50/30 dark:hover:bg-[#2C1E16] transition-colors">
-                          <td className="p-4 font-black text-amber-950 dark:text-[#F3E8D6]">{customer.name || 'Sem nome'}</td>
-                          <td className="p-4 text-stone-600 dark:text-[#E2D4C1] text-sm font-medium">{customer.referrerName}</td>
-                          <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-black ${customer.referralsCount > 0 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-[#1A0F0A] text-stone-500 dark:text-stone-400'}`}>{customer.referralsCount}</span></td>
-                          <td className="p-4 text-center font-black text-amber-800 dark:text-[#C17F59]">{customer.purchases || 0}</td>
-                          <td className="p-4 text-center flex items-center justify-center gap-2">
-                             <button onClick={() => setEditingCustomer({...customer, referredByInput: customer.referrerName === 'Ninguém (Direto)' ? '' : customer.referrerName})} className="p-2 text-amber-600 hover:bg-amber-50 dark:text-[#C17F59] dark:hover:bg-[#2C1E16] rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
-                             <button onClick={() => handleDeleteCustomer(customer.id)} className="p-2 text-stone-400 dark:text-stone-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors inline-flex" title="Remover cliente"><Trash2 size={18} /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
+                        <tr key={c </tbody>
                   </table>
                 </div>
               </div>
